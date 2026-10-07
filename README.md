@@ -27,11 +27,11 @@ One Go image (`panel`, `dns`, `proxy`, `migrate`) and a React UI. No third-party
 bash <(curl -Ls https://raw.githubusercontent.com/Jav1x/DNSmarty/main/scripts/dnsmarty.sh) @ install
 ```
 
-The installer asks for a language (`en` or `ru`), generates `.env` in `/opt/dnsmarty`, and prints the admin password once. The panel is at `https://127.0.0.1:7443` (Caddy's internal certificate; the browser will warn). Command `dnsmarty` opens the menu.
+The installer follows the system language, checks Docker, ports, firewall, and whether a panel is already there, then writes `.env` in `/opt/dnsmarty` and prints the admin password once. The panel is at `https://127.0.0.1:7443` (Caddy's internal certificate; the browser will warn). Command `dnsmarty` opens the menu.
 
 | Command | What it does |
 | --- | --- |
-| `install` | Create `.env`, pull images, start Postgres, migrate, panel, and Caddy |
+| `install` | Check the host, create `.env`, pull images, start Postgres, migrate, panel, and Caddy |
 | `update` | Pull images and recreate containers |
 | `up` / `down` / `restart` / `status` / `logs` | Compose controls |
 | `edit-env` | Edit `/opt/dnsmarty/.env` |
