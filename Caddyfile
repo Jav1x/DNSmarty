@@ -1,0 +1,9 @@
+{
+	admin off
+	auto_https disable_redirects
+}
+
+:443 {
+	tls internal
+	reverse_proxy panel:8080
+}

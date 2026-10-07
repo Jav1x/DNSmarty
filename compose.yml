@@ -1,0 +1,114 @@
+name: dnsmarty
+
+# Profiles: panel, dns, proxy.
+# One machine: docker compose --profile panel --profile dns --profile proxy up -d --build
+# dns and proxy are separate host-network services, not one container with two roles.
+
+x-image: &image
+  build: .
+  image: dnsmarty:local
+
+services:
+  postgres:
+    image: postgres:16
+    profiles: [panel]
+    environment:
+      POSTGRES_USER: dnsmarty
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: dnsmarty
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dnsmarty -d dnsmarty"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [control]
+    restart: unless-stopped
+
+  migrate:
+    <<: *image
+    profiles: [panel]
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: postgres://dnsmarty:${POSTGRES_PASSWORD:-}@postgres:5432/dnsmarty?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [control]
+    restart: "no"
+
+  panel:
+    <<: *image
+    profiles: [panel]
+    command: ["panel"]
+    environment:
+      DATABASE_URL: postgres://dnsmarty:${POSTGRES_PASSWORD:-}@postgres:5432/dnsmarty?sslmode=disable
+      PANEL_ADMIN_USER: ${PANEL_ADMIN_USER:-admin}
+      PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      PANEL_MASTER_KEY: ${PANEL_MASTER_KEY:-}
+      PANEL_LISTEN: ":8080"
+      METRICS_ADDR: ":9100"
+    ports:
+      # Localhost only, so a co-located data plane can pull. The panel does not publish 53/80/443.
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9100:9100"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [control]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    profiles: [panel]
+    ports:
+      - "${PANEL_HTTPS_PORT:-7443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - panel
+    networks: [control]
+    restart: unless-stopped
+
+  dns:
+    <<: *image
+    profiles: [dns]
+    # Ports 53 and 853 require root; the image user is nonroot.
+    user: "0:0"
+    command: ["dns"]
+    network_mode: host
+    environment:
+      NODE_KEY: ${DNS_NODE_KEY:-}
+      AGENT_ADDR: ${DNS_AGENT_ADDR:-:9443}
+      TLS_CERT_FILE: /certs/cert.pem
+      TLS_KEY_FILE: /certs/key.pem
+      DNS_ADDR: ":53"
+      DOT_ADDR: ":853"
+      DOH_ADDR: ":8443"
+      METRICS_ADDR: ":9101"
+    volumes:
+      - ./certs/dns:/certs:ro
+    restart: unless-stopped
+
+  proxy:
+    <<: *image
+    profiles: [proxy]
+    user: "0:0"
+    command: ["proxy"]
+    network_mode: host
+    environment:
+      NODE_KEY: ${PROXY_NODE_KEY:-}
+      AGENT_ADDR: ${PROXY_AGENT_ADDR:-:9444}
+      PROXY_HTTP_ADDR: ":80"
+      PROXY_HTTPS_ADDR: ":443"
+      METRICS_ADDR: ":9102"
+    restart: unless-stopped
+
+networks:
+  control:
+    name: dnsmarty_control
+
+volumes:
+  postgres_data:

@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+/dnsmarty
+/bin/
+web/node_modules/
+internal/panel/dist/assets/
+certs/**/*.pem
+certs/**/*.key
+certs/**/*.crt
+.DS_Store

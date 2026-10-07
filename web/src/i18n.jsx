@@ -1,0 +1,341 @@
+import { createContext, useContext, useEffect, useState } from "react";
+
+const dict = {
+  en: {
+    overview: "Overview",
+    nodes: "Nodes",
+    domains: "Domains",
+    clients: "Clients",
+    proxyTitle: "Proxy",
+    logs: "Logs",
+    settings: "Settings",
+    audit: "Audit",
+    logout: "Log out",
+    loginLead: "Sign in to the panel. Client traffic does not come here.",
+    username: "Username",
+    password: "Password",
+    signIn: "Sign in",
+    qps: "QPS, 60 s",
+    sessions60: "Sessions, 60 s",
+    bytes24: "Bytes, 24 h",
+    acl60: "ACL refusals, 60 s",
+    patch: "Patch bay",
+    domain: "Domain",
+    noDomains: "No domains.",
+    legendLive: "in the snapshot",
+    legendDead: "assigned, no contact for 30 s",
+    legendEmpty: "not wired",
+    nodeCol: "Nodes",
+    name: "Name",
+    role: "Role",
+    publicIp: "Public IP",
+    agent: "Agent",
+    error: "Error",
+    noNodes: "No nodes.",
+    noUdp: "No UDP or QUIC. The proxy accepts TCP only: HTTP by the Host header and HTTPS by SNI, without decrypting TLS.",
+    newNode: "New node",
+    stepAddr: "1 address",
+    stepKey: "2 key",
+    stepLink: "3 link",
+    ipv4: "Public IPv4",
+    ipv6: "Public IPv6",
+    region: "Region",
+    agentHost: "Agent address",
+    agentPort: "Management port",
+    inRotation: "In rotation",
+    enabled: "enabled",
+    enabledFem: "enabled",
+    nodeHint: "The public IP is what DNS answers with. The agent address is where the panel opens the control channel. It can be the same host.",
+    issueKey: "Issue key",
+    keyOnce: "The key for node {name} is shown once:",
+    scriptHint: "On the node machine, download the script and run it. It asks for the key and port {port}.",
+    downloadScript: "Download install-node.sh",
+    next: "Next",
+    anotherNode: "Another node",
+    linked: "Connected. The panel will push configuration on its own.",
+    notLinked: "Did not connect: {error}",
+    close: "Close",
+    saved: "Saved.",
+    linkedShort: "Connected.",
+    newKeyOnce: "New key, shown once: {key}",
+    online: "in contact",
+    offline: "no contact for 30 s",
+    save: "Save",
+    checkLink: "Check link",
+    newKey: "New key",
+    deleteName: "Delete {name}",
+    delete: "Delete",
+    newDomain: "New domain",
+    seedHint: "The only seeded name is example.com. No third-party lists are built in.",
+    match: "Match",
+    suffix: "suffix",
+    fqdn: "exact name",
+    strategy: "Strategy",
+    rr: "round robin",
+    weighted: "weighted",
+    sticky: "sticky /24",
+    comment: "Comment",
+    add: "Add",
+    allowNet: "Allowed network",
+    allowHint: "An empty list refuses everyone except the bootstrap CIDR. The client IP is visible only with host networking.",
+    label: "Label",
+    state: "State",
+    filter: "Filter",
+    clientIp: "Client IP",
+    show: "Show",
+    time: "Time",
+    type: "Type",
+    code: "Code",
+    decision: "Decision",
+    bytes: "Bytes",
+    status: "Status",
+    noBody: "The request body is not stored.",
+    params: "Parameters",
+    ttl: "TTL, s",
+    pushInterval: "Push interval, s",
+    retention: "Retention, days",
+    sessionsPerIp: "Sessions per IP",
+    dialMs: "Dial, ms",
+    idleMs: "Idle, ms",
+    agentImage: "Agent image",
+    upstreamHint: "Recursive resolver IP only. DNS and the proxy query it directly, not through their own port 53.",
+    upstreamEmpty: "No upstream yet.",
+    address: "Address",
+    order: "Order",
+    auditTitle: "Who changed the panel",
+    who: "Who",
+    action: "Action",
+    detail: "Detail",
+    ipPlaceholder: "198.51.100.10 or a CIDR",
+  },
+  ru: {
+    overview: "Обзор",
+    nodes: "Узлы",
+    domains: "Домены",
+    clients: "Клиенты",
+    proxyTitle: "Прокси",
+    logs: "Журналы",
+    settings: "Настройки",
+    audit: "Аудит",
+    logout: "Выйти",
+    loginLead: "Вход в панель. Трафик клиентов сюда не приходит.",
+    username: "Логин",
+    password: "Пароль",
+    signIn: "Войти",
+    qps: "QPS, 60 с",
+    sessions60: "Сессии, 60 с",
+    bytes24: "Байты, 24 ч",
+    acl60: "Отказы ACL, 60 с",
+    patch: "Коммутация",
+    domain: "Домен",
+    noDomains: "Нет доменов.",
+    legendLive: "в снимке",
+    legendDead: "назначен, нет связи 30 с",
+    legendEmpty: "не подключён",
+    nodeCol: "Узлы",
+    name: "Имя",
+    role: "Роль",
+    publicIp: "Публичный IP",
+    agent: "Агент",
+    error: "Ошибка",
+    noNodes: "Узлов нет.",
+    noUdp: "UDP и QUIC нет. Прокси принимает только TCP: HTTP по заголовку Host и HTTPS по SNI, без расшифровки TLS.",
+    newNode: "Новая нода",
+    stepAddr: "1 адрес",
+    stepKey: "2 ключ",
+    stepLink: "3 связь",
+    ipv4: "Публичный IPv4",
+    ipv6: "Публичный IPv6",
+    region: "Регион",
+    agentHost: "Адрес агента",
+    agentPort: "Порт управления",
+    inRotation: "В ротации",
+    enabled: "включён",
+    enabledFem: "включена",
+    nodeHint: "Публичный IP попадает в DNS-ответы. Адрес агента — куда панель откроет канал. Это может быть тот же хост.",
+    issueKey: "Выпустить ключ",
+    keyOnce: "Ключ ноды {name} показывается один раз:",
+    scriptHint: "На машине узла скачайте скрипт и запустите его. Он спросит ключ и порт {port}.",
+    downloadScript: "Скачать install-node.sh",
+    next: "Далее",
+    anotherNode: "Другая нода",
+    linked: "Связь есть. Панель будет присылать конфигурацию сама.",
+    notLinked: "Не подключилась: {error}",
+    close: "Закрыть",
+    saved: "Сохранено.",
+    linkedShort: "Связь есть.",
+    newKeyOnce: "Новый ключ, один раз: {key}",
+    online: "на связи",
+    offline: "нет связи 30 с",
+    save: "Сохранить",
+    checkLink: "Проверить связь",
+    newKey: "Новый ключ",
+    deleteName: "Удалить {name}",
+    delete: "Удалить",
+    newDomain: "Новый домен",
+    seedHint: "В сиде только example.com. Чужие списки не вшиты.",
+    match: "Совпадение",
+    suffix: "суффикс",
+    fqdn: "точное имя",
+    strategy: "Стратегия",
+    rr: "по кругу",
+    weighted: "по весу",
+    sticky: "липкий /24",
+    comment: "Комментарий",
+    add: "Добавить",
+    allowNet: "Разрешённая сеть",
+    allowHint: "Пустой список — REFUSED всем, кроме bootstrap-CIDR. Клиентский IP виден только при network host.",
+    label: "Подпись",
+    state: "Состояние",
+    filter: "Фильтр",
+    clientIp: "IP клиента",
+    show: "Показать",
+    time: "Время",
+    type: "Тип",
+    code: "Код",
+    decision: "Решение",
+    bytes: "Байты",
+    status: "Статус",
+    noBody: "Тело запроса не пишется.",
+    params: "Параметры",
+    ttl: "TTL, с",
+    pushInterval: "Интервал push, с",
+    retention: "Retention, дней",
+    sessionsPerIp: "Сессий на IP",
+    dialMs: "Dial, мс",
+    idleMs: "Idle, мс",
+    agentImage: "Образ агента",
+    upstreamHint: "Только IP рекурсивного резолвера. И DNS, и прокси спрашивают его напрямую, не через свой порт 53.",
+    upstreamEmpty: "Upstream не задан.",
+    address: "Адрес",
+    order: "Порядок",
+    auditTitle: "Кто менял панель",
+    who: "Кто",
+    action: "Действие",
+    detail: "Детали",
+    ipPlaceholder: "198.51.100.10 или CIDR",
+  },
+};
+
+const fields = {
+  en: {
+    "имя узла": "node name",
+    "роль": "role",
+    "регион": "region",
+    "адрес агента": "agent address",
+    "порт агента": "agent port",
+    "ключ": "key",
+    "вес только у прокси": "weight is only for a proxy",
+    "подпись": "label",
+    "имя домена": "domain name",
+    "тип совпадения": "match type",
+    "стратегия": "strategy",
+    "комментарий": "comment",
+    "вес": "weight",
+    "upstream должен быть IP": "upstream must be an IP",
+    "порт upstream": "upstream port",
+    "TTL 1–300": "TTL 1–300",
+    "интервал pull 2–15 с": "push interval 2–15 s",
+    "retention 1–30": "retention 1–30",
+    "лимит сессий": "session limit",
+    "таймаут dial": "dial timeout",
+    "таймаут idle": "idle timeout",
+    "образ агента": "agent image",
+  },
+  ru: {},
+};
+
+const phrases = {
+  en: {
+    "Такая запись уже есть.": "That record already exists.",
+    "Запись не найдена.": "Record not found.",
+    "Не удалось сохранить.": "Could not save.",
+    "некорректный JSON": "Invalid JSON.",
+    "Панель не смогла проверить пароль.": "The panel could not check the password.",
+    "Неверный логин или пароль.": "Wrong username or password.",
+    "Сессия не создана.": "Session was not created.",
+    "нужен вход": "Sign in required.",
+    "Сводка не собралась.": "The overview could not be loaded.",
+    "Список узлов не прочитан.": "The node list could not be read.",
+    "Список доменов не прочитан.": "The domain list could not be read.",
+    "Список сетей не прочитан.": "The network list could not be read.",
+    "Настройки не прочитаны.": "Settings could not be read.",
+    "Upstream не прочитан.": "Upstreams could not be read.",
+    "Журнал аудита не прочитан.": "The audit log could not be read.",
+    "Проверьте поле: IP": "Check the field: IP",
+    "ключ не совпал": "The key does not match.",
+  },
+  ru: {
+    "That record already exists.": "Такая запись уже есть.",
+    "Record not found.": "Запись не найдена.",
+    "Could not save.": "Не удалось сохранить.",
+    "Invalid JSON.": "Некорректный JSON.",
+    "The panel could not check the password.": "Панель не смогла проверить пароль.",
+    "Wrong username or password.": "Неверный логин или пароль.",
+    "Session was not created.": "Сессия не создана.",
+    "Sign in required.": "Нужен вход.",
+    "The key does not match.": "Ключ не совпал.",
+  },
+};
+
+const I18n = createContext(null);
+
+function initialLang() {
+  const saved = localStorage.getItem("dnsmarty-lang");
+  if (saved === "en" || saved === "ru") return saved;
+  return navigator.language?.toLowerCase().startsWith("ru") ? "ru" : "en";
+}
+
+export function I18nProvider({ children }) {
+  const [lang, setLangState] = useState(initialLang);
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
+  function setLang(next) {
+    localStorage.setItem("dnsmarty-lang", next);
+    setLangState(next);
+  }
+  function t(key, vars) {
+    let text = dict[lang][key] ?? dict.en[key] ?? key;
+    if (vars) {
+      for (const [name, value] of Object.entries(vars)) {
+        text = text.replaceAll(`{${name}}`, value);
+      }
+    }
+    return text;
+  }
+  function err(message) {
+    if (!message) return "";
+    const exact = phrases[lang][message];
+    if (exact) return exact;
+    const reach = message.match(/^(?:нет связи с|Cannot reach) (.+)$/);
+    if (reach) return lang === "ru" ? `Нет связи с ${reach[1]}` : `Cannot reach ${reach[1]}`;
+    const field = message.match(/^(?:Проверьте поле|Check the field): (.+)$/);
+    if (field) {
+      const name = fields[lang][field[1]] || field[1];
+      return lang === "ru" ? `Проверьте поле: ${name}` : `Check the field: ${name}`;
+    }
+    const boot = message.match(/^Проверьте поле: bootstrap (.+)$/);
+    if (boot) return lang === "ru" ? message : `Check the field: bootstrap ${boot[1]}`;
+    const agent = message.match(/^агент ответил (.+)$/);
+    if (agent) return lang === "ru" ? message : `Agent replied ${agent[1]}`;
+    const cfg = message.match(/^конфиг не принят: (.+)$/);
+    if (cfg) return lang === "ru" ? message : `Config was rejected: ${cfg[1]}`;
+    return message;
+  }
+  return <I18n.Provider value={{ lang, setLang, t, err }}>{children}</I18n.Provider>;
+}
+
+export function useI18n() {
+  return useContext(I18n);
+}
+
+export function LangSwitch() {
+  const { lang, setLang } = useI18n();
+  return (
+    <span className="lang">
+      <button type="button" className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
+      <button type="button" className={lang === "ru" ? "on" : ""} onClick={() => setLang("ru")}>RU</button>
+    </span>
+  );
+}

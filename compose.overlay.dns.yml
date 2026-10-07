@@ -1,0 +1,8 @@
+# Second machine, DNS only. Use the same key and port as in the panel wizard.
+# DNS_NODE_KEY=... DNS_AGENT_ADDR=:9443 docker compose -f compose.yml -f compose.overlay.dns.yml --profile dns up -d --build
+
+services:
+  dns:
+    environment:
+      NODE_KEY: ${DNS_NODE_KEY:-}
+      AGENT_ADDR: ${DNS_AGENT_ADDR:-:9443}

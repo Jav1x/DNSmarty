@@ -1,0 +1,8 @@
+# Second machine, proxy only.
+# PROXY_NODE_KEY=... PROXY_AGENT_ADDR=:9444 docker compose -f compose.yml -f compose.overlay.proxy.yml --profile proxy up -d --build
+
+services:
+  proxy:
+    environment:
+      NODE_KEY: ${PROXY_NODE_KEY:-}
+      AGENT_ADDR: ${PROXY_AGENT_ADDR:-:9444}
