@@ -3,15 +3,40 @@ name: dnsmarty
 # Profiles: panel, dns, proxy.
 # One machine: docker compose --profile panel --profile dns --profile proxy up -d --build
 # dns and proxy are separate host-network services, not one container with two roles.
+#
+# Panel TLS:
+#   default   Caddyfile, tls internal, https://127.0.0.1:${PANEL_HTTPS_PORT:-7443}
+#   ACME      CADDYFILE=Caddyfile.acme PANEL_DOMAIN=panel.example.com
+#             PANEL_HTTPS_PORT=443 PANEL_HTTP_PORT=80 (Let's Encrypt needs both)
 
 x-image: &image
-  build: .
-  image: dnsmarty:local
+  build:
+    context: .
+    args:
+      VERSION: ${DNSMARTY_VERSION:-dev}
+  image: ${DNSMARTY_IMAGE:-dnsmarty:local}
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# Every dnsmarty container: read-only root, no capabilities, no privilege gain.
+x-hardened: &hardened
+  <<: *logging
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  tmpfs: [/tmp]
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
     profiles: [panel]
+    <<: *logging
+    security_opt: ["no-new-privileges:true"]
     environment:
       POSTGRES_USER: dnsmarty
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
@@ -20,18 +45,20 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dnsmarty -d dnsmarty"]
-      interval: 2s
+      interval: 5s
       timeout: 3s
       retries: 20
+    shm_size: 128m
+    mem_limit: 1g
     networks: [control]
     restart: unless-stopped
 
   migrate:
-    <<: *image
+    <<: [*image, *hardened]
     profiles: [panel]
     command: ["migrate"]
     environment:
-      DATABASE_URL: postgres://dnsmarty:${POSTGRES_PASSWORD:-}@postgres:5432/dnsmarty?sslmode=disable
+      DATABASE_URL: postgres://dnsmarty:${POSTGRES_PASSWORD}@postgres:5432/dnsmarty?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,44 +66,68 @@ services:
     restart: "no"
 
   panel:
-    <<: *image
+    <<: [*image, *hardened]
     profiles: [panel]
     command: ["panel"]
     environment:
-      DATABASE_URL: postgres://dnsmarty:${POSTGRES_PASSWORD:-}@postgres:5432/dnsmarty?sslmode=disable
+      DATABASE_URL: postgres://dnsmarty:${POSTGRES_PASSWORD}@postgres:5432/dnsmarty?sslmode=disable
       PANEL_ADMIN_USER: ${PANEL_ADMIN_USER:-admin}
       PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
       PANEL_MASTER_KEY: ${PANEL_MASTER_KEY:-}
       PANEL_LISTEN: ":8080"
+      PANEL_COOKIE_SECURE: ${PANEL_COOKIE_SECURE:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       METRICS_ADDR: ":9100"
     ports:
-      # Localhost only, so a co-located data plane can pull. The panel does not publish 53/80/443.
+      # Localhost only. Browsers reach the panel through Caddy.
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:9100:9100"
+    healthcheck:
+      test: ["CMD", "/dnsmarty", "healthcheck", "--url", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       migrate:
         condition: service_completed_successfully
+    mem_limit: 512m
+    pids_limit: 256
     networks: [control]
     restart: unless-stopped
 
   caddy:
-    image: caddy:2
+    image: caddy:2@sha256:f2a1290d0463aad60660d4ec134943f183ee2a5f6c3eb7bf32dd984f2f020772
     profiles: [panel]
+    <<: *hardened
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      PANEL_DOMAIN: ${PANEL_DOMAIN:-}
     ports:
       - "${PANEL_HTTPS_PORT:-7443}:443"
+      # Used only in ACME mode for the HTTP-01 challenge and the redirect to HTTPS.
+      - "${PANEL_HTTP_PORT:-127.0.0.1:7080}:80"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro
+      # Certificates and the internal CA survive container recreation;
+      # without this, ACME would re-issue on every update and hit rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
-      - panel
+      panel:
+        condition: service_healthy
+    mem_limit: 256m
     networks: [control]
     restart: unless-stopped
 
   dns:
-    <<: *image
+    <<: [*image, *hardened]
     profiles: [dns]
-    # Ports 53 and 853 require root; the image user is nonroot.
+    # Binding 53 and 853 needs NET_BIND_SERVICE in the effective set. Docker grants added
+    # capabilities to uid 0 only; everything else is dropped.
     user: "0:0"
+    cap_add: [NET_BIND_SERVICE]
     command: ["dns"]
     network_mode: host
     environment:
@@ -88,14 +139,25 @@ services:
       DOT_ADDR: ":853"
       DOH_ADDR: ":8443"
       METRICS_ADDR: "127.0.0.1:9101"
+      STATE_DIR: /var/lib/dnsmarty
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./certs/dns:/certs:ro
+      - ./state/dns:/var/lib/dnsmarty
+    healthcheck:
+      test: ["CMD", "/dnsmarty", "healthcheck", "--url", "http://127.0.0.1:9101/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    mem_limit: 512m
+    pids_limit: 512
     restart: unless-stopped
 
   proxy:
-    <<: *image
+    <<: [*image, *hardened]
     profiles: [proxy]
     user: "0:0"
+    cap_add: [NET_BIND_SERVICE]
     command: ["proxy"]
     network_mode: host
     environment:
@@ -104,11 +166,25 @@ services:
       PROXY_HTTP_ADDR: ":80"
       PROXY_HTTPS_ADDR: ":443"
       METRICS_ADDR: "127.0.0.1:9102"
+      STATE_DIR: /var/lib/dnsmarty
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./state/proxy:/var/lib/dnsmarty
+    healthcheck:
+      test: ["CMD", "/dnsmarty", "healthcheck", "--url", "http://127.0.0.1:9102/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    mem_limit: 1g
+    pids_limit: 1024
     restart: unless-stopped
 
 networks:
-  control:
-    name: dnsmarty_control
+  # No fixed name: compose names it <project>_control (dnsmarty_control for this project),
+  # so a second project on the same host cannot join it and resolve "postgres" to the wrong database.
+  control: {}
 
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:

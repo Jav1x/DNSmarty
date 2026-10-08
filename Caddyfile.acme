@@ -1,0 +1,11 @@
+# Public panel with a Let's Encrypt certificate.
+# Needs PANEL_DOMAIN pointing at this host and ports 80 and 443 free:
+# CADDYFILE=Caddyfile.acme PANEL_DOMAIN=panel.example.com PANEL_HTTPS_PORT=443 PANEL_HTTP_PORT=80
+{
+	admin off
+}
+
+{$PANEL_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy panel:8080
+}

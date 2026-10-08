@@ -29,12 +29,16 @@ One Go image (`panel`, `dns`, `proxy`, `migrate`) and a React UI. No third-party
 bash <(curl -Ls https://raw.githubusercontent.com/Jav1x/DNSmarty/main/scripts/dnsmarty.sh) @ install
 ```
 
-The installer follows the system language, checks Docker, ports, firewall, and whether a panel is already there, then writes `.env` in `/opt/dnsmarty` and prints the admin password once. The panel is at `https://127.0.0.1:7443` (Caddy's internal certificate; the browser will warn). Command `dnsmarty` opens the menu.
+The installer follows the system language, checks Docker, ports, firewall, and whether a panel is already there, then writes `.env` in `/opt/dnsmarty` and prints the admin password once. Change it in the panel (Account); `PANEL_ADMIN_PASSWORD` is used only on the first start. Command `dnsmarty` opens the menu.
+
+Without a domain, the panel is at `https://127.0.0.1:7443` with Caddy's internal certificate (the browser will warn). With `dnsmarty install --domain panel.example.com`, Caddy gets a Let's Encrypt certificate; the name must point at the host and ports 80 and 443 must be free, so not on a machine that also runs the proxy.
+
+The installers pin the image to the latest release tag in `.env` (`DNSMARTY_IMAGE`) and verify downloaded scripts against the release `SHA256SUMS`. `dnsmarty update` moves to the newest release, `dnsmarty update --version v1.2.3` to a given one.
 
 | Command | What it does |
 | --- | --- |
-| `install` | Check the host, create `.env`, pull images, start Postgres, migrate, panel, and Caddy |
-| `update` | Pull images and recreate containers |
+| `install [--domain D] [--version V]` | Check the host, create `.env`, pull images, start Postgres, migrate, panel, and Caddy |
+| `update [--version V]` | Move to the latest release (or V), pull, and recreate containers |
 | `up` / `down` / `restart` / `status` / `logs` | Compose controls |
 | `edit-env` | Edit `/opt/dnsmarty/.env` |
 | `uninstall` | Stop containers and keep `/opt/dnsmarty` |
@@ -61,7 +65,9 @@ dnsmarty-node install --role proxy --key KEY --port 9444
 
 DNS listens on 53, 853, and DoH 8443. The proxy listens on 80 and 443. The management port is separate. On one machine they are two containers.
 
-Files live in `/opt/dnsmarty-dns` or `/opt/dnsmarty-proxy`. `dnsmarty-node update` pulls the image and recreates the container.
+Files live in `/opt/dnsmarty-dns` or `/opt/dnsmarty-proxy`; the last snapshot is in `state/`. `dnsmarty-node update [--version V]` moves to the latest release and recreates the container; keys you added to `.env` by hand are kept. For DoT and DoH the installer creates a self-signed ECDSA certificate; put your own in `certs/cert.pem` and `certs/key.pem` to stop client warnings.
+
+Containers run with a read-only root filesystem, no capabilities except `NET_BIND_SERVICE` for DNS and the proxy, `no-new-privileges`, memory limits, log rotation, and a healthcheck (`dnsmarty healthcheck`).
 
 ## Clients and names
 
