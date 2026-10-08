@@ -676,9 +676,12 @@ EOF
 {
 	admin off
 	auto_https disable_redirects
+	# Browsers connecting by IP do not send SNI; this picks the site below.
+	default_sni 127.0.0.1
 }
 
-:443 {
+# A named site lets the internal CA issue a certificate; ":443" cannot, and the handshake fails.
+127.0.0.1, localhost {
 	tls internal
 	encode zstd gzip
 	reverse_proxy panel:8080
