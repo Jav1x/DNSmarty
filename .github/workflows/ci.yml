@@ -1,9 +1,10 @@
 name: ci
 
+# Pull requests run this directly; pushes to main and tags run it through image.yml
+# before anything is built or published.
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
@@ -12,12 +13,26 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt needed:"; echo "$out"; exit 1
+          fi
       - run: go vet ./...
-      - run: go test -count=1 ./...
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      # The integration test starts Postgres with testcontainers; ubuntu runners have Docker.
+      - run: go test -race -count=1 ./...
 
   web:
     runs-on: ubuntu-latest
@@ -25,11 +40,56 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run build
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # shellcheck ships with the ubuntu runner image.
+      - run: shellcheck --severity=warning scripts/*.sh
+      - run: for f in scripts/*.sh; do bash -n "$f"; done
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: repository compose
+        run: |
+          sed 's/change-me/ci-placeholder-value/g' .env.example > /tmp/ci.env
+          docker compose --env-file /tmp/ci.env --profile panel --profile dns --profile proxy config -q
+          # ACME mode switches the Caddyfile and the published ports.
+          CADDYFILE=Caddyfile.acme PANEL_DOMAIN=panel.example.com PANEL_HTTPS_PORT=443 PANEL_HTTP_PORT=80 \
+            docker compose --env-file /tmp/ci.env --profile panel config -q
+          # A DNS-only machine has none of the panel secrets.
+          echo "DNS_NODE_KEY=x" > /tmp/dns.env
+          docker compose -f compose.yml -f compose.overlay.dns.yml --env-file /tmp/dns.env --profile dns config -q
+      - name: installer compose
+        run: |
+          # The installers write their own compose files; render them and validate the result.
+          sed '/^main "\$@"$/d' scripts/dnsmarty.sh > /tmp/panel.sh
+          mkdir -p /tmp/panel
+          bash -c 'source /tmp/panel.sh; APP_DIR=/tmp/panel; IMAGE=ghcr.io/example/dnsmarty:1.0.0
+                   write_env; apply_tls_mode; ensure_env; write_compose'
+          docker compose -f /tmp/panel/compose.yml --env-file /tmp/panel/.env config -q
+          sed '/^main "\$@"$/d' scripts/dnsmarty-node.sh > /tmp/node.sh
+          for r in dns proxy; do
+            bash -c "source /tmp/node.sh; app_dir() { printf '/tmp/node-%s' \"\$role\"; }
+                     role=$r; key=\$(openssl rand -hex 32); port=9443; IMAGE=ghcr.io/example/dnsmarty:1.0.0
+                     mkdir -p \$(app_dir); write_unit"
+            docker compose -f /tmp/node-$r/compose.yml config -q
+          done

@@ -1,0 +1,30 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus checks for
+  # HTTP bodies, context use and SQL rows that matter for this code.
+  enable:
+    - bodyclose
+    - contextcheck
+    - errorlint
+    - misspell
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+  exclusions:
+    presets:
+      # Ignore unchecked Close/Flush/Write errors on deferred cleanup.
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - path: _test\.go
+        linters: [bodyclose, noctx, contextcheck]
+
+formatters:
+  enable:
+    - gofmt

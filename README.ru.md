@@ -104,6 +104,19 @@ go test ./...
 
 Для тестов на Postgres нужен Docker.
 
+## Сборка и проверка образа
+
+Каждый push в `main` и каждый тег `v*` сначала прогоняет тесты, линтеры, `govulncheck`, `npm audit` и `shellcheck`, и только потом собирает образ. Мультиархитектурный образ несёт SBOM и provenance, проходит сканирование Trivy (без исправимых HIGH и CRITICAL) и подписывается cosign без ключей. Проверить образ перед запуском:
+
+```bash
+cosign verify ghcr.io/jav1x/dnsmarty@sha256:DIGEST \
+  --certificate-identity-regexp '^https://github.com/Jav1x/DNSmarty/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/jav1x/dnsmarty@sha256:DIGEST --owner Jav1x
+```
+
+Релиз по тегу прикладывает скрипты установки и `SHA256SUMS`; установщики сверяют скачанное с ними.
+
 ## Секреты
 
 Секреты только в `.env` или Docker secrets. В образ они не копируются. В `.env.example` только заглушки. Ключ узла в Postgres — шифротекст AES-GCM от `PANEL_MASTER_KEY`. Не публикуйте `.env`, приватные ключи и `certs/*.pem`.

@@ -106,4 +106,16 @@ Docker is required for the Postgres tests.
 
 ## Security
 
+Every push to `main` and every `v*` tag runs the tests, lint, `govulncheck`, `npm audit` and `shellcheck` before an image is built. The multi-arch image carries an SBOM and provenance, must pass a Trivy scan (no fixable HIGH or CRITICAL), and is signed with cosign without keys. Check an image before running it:
+
+```bash
+cosign verify ghcr.io/jav1x/dnsmarty@sha256:DIGEST \
+  --certificate-identity-regexp '^https://github.com/Jav1x/DNSmarty/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/jav1x/dnsmarty@sha256:DIGEST --owner Jav1x
+```
+
+A tag release also attaches the installer scripts and `SHA256SUMS`; the installers check downloads against it.
+
+
 Secrets stay in `.env` or Docker secrets. They are not copied into the image. `.env.example` contains only placeholders. Node keys in Postgres are AES-GCM ciphertext under `PANEL_MASTER_KEY`. Do not publish a `.env`, a private key, or `certs/*.pem`.

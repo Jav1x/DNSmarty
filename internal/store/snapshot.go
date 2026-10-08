@@ -187,6 +187,10 @@ func loadProxyBody(ctx context.Context, tx pgx.Tx, nodeID string) (snapshot.Prox
 		}
 		body.Upstreams = append(body.Upstreams, a)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return body, err
+	}
 	rows.Close()
 	if body.Allow, body.Deny, body.Bootstrap, err = loadACL(ctx, tx); err != nil {
 		return body, err
