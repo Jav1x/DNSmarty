@@ -6,7 +6,7 @@ RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26-bookworm@sha256:dc9ad6c05acc7a88e5b71bde60a5fe3bd4b9f0db209011711b464107438a8107 AS build
+FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS build
 ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
