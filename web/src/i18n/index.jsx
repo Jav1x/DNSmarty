@@ -29,6 +29,10 @@ export function I18nProvider({ children }) {
   }
   function err(message) {
     if (!message) return "";
+    if (typeof message === "object" && message !== null) {
+      return errFromBody(message);
+    }
+    // Plain string errors come from agents and older paths; keep the phrase tables for them.
     const exact = dictPhrases[lang][message];
     if (exact) return exact;
     const reach = message.match(/^(?:нет связи с|Cannot reach) (.+)$/);
@@ -45,6 +49,28 @@ export function I18nProvider({ children }) {
     const cfg = message.match(/^конфиг не принят: (.+)$/);
     if (cfg) return lang === "ru" ? message : `Config was rejected: ${cfg[1]}`;
     return message;
+  }
+
+  // errFromBody translates a structured {error, code, field} API error by its code.
+  function errFromBody(body) {
+    const key = {
+      unauthorized: "errUnauthorized",
+      csrf: "errCsrf",
+      rate_limited: "errRateLimited",
+      bad_credentials: "errBadCredentials",
+      wrong_password: "errWrongPassword",
+      weak_password: "errWeakPassword",
+      conflict: "errConflict",
+      not_found: "errNotFound",
+      bad_json: "errBadJson",
+      content_type: "errContentType",
+      invalid: "errInvalid",
+      internal: "errInternal",
+    }[body.code];
+    if (key) {
+      return t(key, { field: (dictFields[lang][body.field] || body.field || "") });
+    }
+    return body.error || String(body);
   }
   return <I18n.Provider value={{ lang, setLang, t, err }}>{children}</I18n.Provider>;
 }

@@ -13,7 +13,7 @@ export function Clients() {
     try {
       setData(await api("/api/clients"));
       setError("");
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
   }
   useEffect(() => { reload(); }, []);
   async function create(kind, event) {
@@ -23,14 +23,14 @@ export function Clients() {
       await api("/api/clients", { method: "POST", body: JSON.stringify({ cidr: form.get("cidr"), label: form.get("label"), list_kind: kind, enabled: form.get("enabled") === "on" }) });
       event.target.reset();
       reload();
-    } catch (err) { setError(err.message); }
+    } catch (err) { setError(err); }
   }
   async function remove(c) {
     ask(t("confirmDelete", { name: c.cidr }), async () => {
       try {
         await api(`/api/clients/${c.id}`, { method: "DELETE" });
         reload();
-      } catch (err) { setError(err.message); }
+      } catch (err) { setError(err); }
     });
   }
   const rows = data || [];

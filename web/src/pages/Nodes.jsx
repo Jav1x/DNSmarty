@@ -27,10 +27,15 @@ export function Nodes() {
     try {
       setData(await api("/api/nodes"));
       setError("");
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
   }
   useEffect(() => { reload(); }, []);
   const nodes = data || [];
+  const [q, setQ] = useState("");
+  const query = q.trim().toLowerCase();
+  const shown = query
+    ? nodes.filter((n) => n.name.toLowerCase().includes(query) || (n.region || "").toLowerCase().includes(query) || `${n.agent_host}:${n.agent_port}`.includes(query))
+    : nodes;
   const editing = open?.mode === "edit" ? nodes.find((n) => n.id === open.node.id) || open.node : null;
   return (
     <>
@@ -39,6 +44,7 @@ export function Nodes() {
       <section className="mod">
         <div className="toolbar">
           <h2>{t("nodes")}</h2>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("searchNodes")} aria-label={t("searchNodes")} />
           <button type="button" onClick={() => setOpen({ mode: "new" })}>{t("newNode")}</button>
         </div>
         <div className="table-wrap">
@@ -50,7 +56,7 @@ export function Nodes() {
             </thead>
             <tbody>
               {data === null && <SkeletonRows cols={6} />}
-              {data !== null && (nodes.length ? nodes.map((n) => (
+              {data !== null && (shown.length ? shown.map((n) => (
                 <tr key={n.id}>
                   <td><StatusLamp on={n.fresh} />{n.name}</td>
                   <td>{n.role}</td>
@@ -103,7 +109,7 @@ function NodeModal({ mode, node, onClose, onChange, setError, ask }) {
       setConnect(null);
       setStep(1);
       onChange();
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
     finally { setBusy(false); }
   }
   async function checkNew() {
@@ -114,7 +120,7 @@ function NodeModal({ mode, node, onClose, onChange, setError, ask }) {
       setConnect(out);
       setStep(2);
       onChange();
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
     finally { setBusy(false); }
   }
   async function save(event) {
@@ -123,21 +129,21 @@ function NodeModal({ mode, node, onClose, onChange, setError, ask }) {
       await api(`/api/nodes/${node.id}`, { method: "POST", body: JSON.stringify(nodeBody(new FormData(event.target))) });
       setMsg(t("saved"));
       onChange();
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
   }
   async function check() {
     try {
       const out = await api(`/api/nodes/${node.id}/connect`, { method: "POST" });
       setMsg(out.ok ? t("linkedShort") : err(out.error));
       onChange();
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
   }
   async function rotate() {
     ask(t("confirmRotate", { name: node.name }), async () => {
       try {
         const out = await api(`/api/nodes/${node.id}/key`, { method: "POST" });
         setMsg(t("newKeyOnce", { key: out.key }));
-      } catch (e) { setError(e.message); }
+      } catch (e) { setError(e); }
     });
   }
   async function remove() {
@@ -146,7 +152,7 @@ function NodeModal({ mode, node, onClose, onChange, setError, ask }) {
         await api(`/api/nodes/${node.id}`, { method: "DELETE" });
         onChange();
         onClose();
-      } catch (e) { setError(e.message); }
+      } catch (e) { setError(e); }
     });
   }
   const title = mode === "new" ? t("newNode") : node?.name;

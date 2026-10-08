@@ -56,7 +56,7 @@ export function Domains() {
     try {
       setData(await api("/api/domains"));
       setError("");
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
   }
   useEffect(() => { reload(); }, []);
   if (!data) return <div className="mod"><Err text={error} />{!error && <SkeletonRows cols={5} />}</div>;
@@ -82,13 +82,13 @@ export function Domains() {
       setGroup(out.id);
       setPage(0);
       reload();
-    } catch (err) { setError(err.message); }
+    } catch (err) { setError(err); }
   }
   async function assignGroup(domain, groupID) {
     try {
       await api(`/api/domains/${domain.id}`, { method: "POST", body: JSON.stringify(domainPayload(domain, groupID)) });
       reload();
-    } catch (err) { setError(err.message); }
+    } catch (err) { setError(err); }
   }
   async function create(event) {
     event.preventDefault();
@@ -97,7 +97,7 @@ export function Domains() {
       event.target.reset();
       setEditing(null);
       reload();
-    } catch (err) { setError(err.message); }
+    } catch (err) { setError(err); }
   }
   async function removeGroup(g) {
     ask(t("confirmDelete", { name: g.name }), async () => {
@@ -105,7 +105,7 @@ export function Domains() {
         await api(`/api/groups/${g.id}`, { method: "DELETE" });
         if (group === g.id) setGroup("all");
         reload();
-      } catch (err) { setError(err.message); }
+      } catch (err) { setError(err); }
     });
   }
   return (
@@ -215,14 +215,14 @@ function DomainCard({ domain, groups, ask, onChange, setError }) {
     try {
       await api(`/api/domains/${domain.id}`, { method: "POST", body: JSON.stringify(domainBody(new FormData(event.target), domain.weights)) });
       onChange();
-    } catch (err) { setError(err.message); }
+    } catch (err) { setError(err); }
   }
   async function remove() {
     ask(t("confirmDelete", { name: domain.name }), async () => {
       try {
         await api(`/api/domains/${domain.id}`, { method: "DELETE" });
         onChange();
-      } catch (err) { setError(err.message); }
+      } catch (err) { setError(err); }
     });
   }
   return (

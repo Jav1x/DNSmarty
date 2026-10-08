@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useLoad, usePoll } from "../hooks/useLoad";
 import { useI18n } from "../i18n";
 import { Err, StatusLamp, SkeletonRows, EmptyRow } from "../components/Bits";
@@ -49,11 +49,23 @@ export function NodeTable({ nodes, cols = 5 }) {
 
 export function Overview() {
   const { t } = useI18n();
+  const [updatedAt, setUpdatedAt] = useState(null);
+  const [ago, setAgo] = useState(0);
   const load = useLoad("/api/overview");
   const { data, error } = load;
   const series = useLoad("/api/overview/series?window=1h");
-  const reload = useCallback(() => { load.reload(); series.reload(); }, [load.reload, series.reload]);
+  const reload = useCallback(async () => {
+    await Promise.all([load.reload(), series.reload()]);
+    setUpdatedAt(Date.now());
+  }, [load.reload, series.reload]);
   usePoll(reload, 10000);
+  // Ticker keeps "updated N s ago" honest between reloads.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (updatedAt) setAgo(Math.round((Date.now() - updatedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [updatedAt]);
   if (!data) return <div className="mod"><Err text={error} />{!error && <SkeletonRows cols={5} />}</div>;
   const o = data.overview;
   const points = series.data?.points || [];
@@ -67,7 +79,10 @@ export function Overview() {
         <div className="meter"><i>{t("domains")}</i><b>{o.rows?.length || 0}</b></div>
       </section>
       <section className="mod chart">
-        <h2>{t("qps")}</h2>
+        <div className="toolbar">
+          <h2>{t("qps")}</h2>
+          <span className="count">{updatedAt ? t("updatedAgo", { n: ago }) : ""}</span>
+        </div>
         <Sparkline values={points.map((p) => p.dns)} />
         <h2 style={{ marginTop: 12 }}>{t("acl60")}</h2>
         <Sparkline values={points.map((p) => p.refused)} danger />

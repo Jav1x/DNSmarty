@@ -25,14 +25,14 @@ export function Account() {
       event.target.reset();
       setMsg(t("passwordChanged"));
       reload();
-    } catch (e) { setPwdError(e.message); }
+    } catch (e) { setPwdError(e); }
   }
   async function revoke(s) {
     ask(t("confirmRevoke"), async () => {
       try {
         await api(`/api/sessions/${s.id}`, { method: "DELETE" });
         reload();
-      } catch (e) { setError(e.message); }
+      } catch (e) { setError(e); }
     });
   }
   async function revokeOthers() {
@@ -41,7 +41,7 @@ export function Account() {
         const out = await api("/api/sessions/revoke-others", { method: "POST" });
         toast(t("revokedN", { n: out.revoked }));
         reload();
-      } catch (e) { setError(e.message); }
+      } catch (e) { setError(e); }
     });
   }
   const rows = data || [];

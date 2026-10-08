@@ -20,7 +20,7 @@ export function Settings() {
       await api("/api/settings", { method: "POST", body: JSON.stringify(body) });
       toast(t("saved"));
       reload();
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
   }
   async function addUpstream(event) {
     event.preventDefault();
@@ -28,7 +28,7 @@ export function Settings() {
       await api("/api/upstreams", { method: "POST", body: JSON.stringify({ addr: new FormData(event.target).get("addr") }) });
       event.target.reset();
       reload();
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
   }
   async function saveUpstream(u, event) {
     event.preventDefault();
@@ -36,14 +36,14 @@ export function Settings() {
     try {
       await api(`/api/upstreams/${u.id}`, { method: "POST", body: JSON.stringify({ addr: form.get("addr"), ordinal: Number(form.get("ordinal")) }) });
       reload();
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e); }
   }
   async function removeUpstream(u) {
     ask(t("confirmDelete", { name: u.addr }), async () => {
       try {
         await api(`/api/upstreams/${u.id}`, { method: "DELETE" });
         reload();
-      } catch (e) { setError(e.message); }
+      } catch (e) { setError(e); }
     });
   }
   return (

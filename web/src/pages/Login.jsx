@@ -13,7 +13,7 @@ export function Login({ onIn }) {
       const out = await api("/api/login", { method: "POST", body: JSON.stringify({ username: data.get("username"), password: data.get("password") }) });
       onIn(out.user, out.csrf);
     } catch (e) {
-      setError(e.message);
+      setError(e);
     }
   }
   return (

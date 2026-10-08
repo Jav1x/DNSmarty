@@ -1,8 +1,10 @@
 export class ApiError extends Error {
-  constructor(message, status, code) {
+  constructor(message, status, code, body) {
     super(message);
     this.status = status;
     this.code = code;
+    // The parsed body, when it carried {error, code, field}: err() translates it by code.
+    this.body = body;
   }
 }
 
@@ -27,14 +29,14 @@ export async function api(path, options = {}) {
     try {
       data = JSON.parse(text);
     } catch {
-      data = { error: text, code: "unknown" };
+      data = { error: text };
     }
   }
   if (response.status === 401) {
-    throw new ApiError(data?.error || "нужен вход", 401, data?.code || "unauthorized");
+    throw new ApiError(data?.error || "нужен вход", 401, data?.code || "unauthorized", data);
   }
   if (!response.ok) {
-    throw new ApiError(data?.error || "ошибка запроса", response.status, data?.code || "unknown");
+    throw new ApiError(data?.error || "ошибка запроса", response.status, data?.code || "unknown", data);
   }
   return data;
 }
