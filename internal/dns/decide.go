@@ -19,6 +19,7 @@ const (
 	ActionLocal   Action = "local"
 	ActionForward Action = "forward"
 	ActionFail    Action = "fail"
+	ActionCached  Action = "cached"
 )
 
 type Decision struct {

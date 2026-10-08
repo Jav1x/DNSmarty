@@ -46,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/revoke-others", s.withAuth(s.sessionsRevokeOthers))
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.withAuth(s.sessionsDelete))
 	mux.HandleFunc("GET /api/overview", s.withAuth(s.overview))
+	mux.HandleFunc("GET /api/overview/series", s.withAuth(s.overviewSeries))
 	mux.HandleFunc("GET /api/nodes", s.withAuth(s.nodes))
 	mux.HandleFunc("POST /api/nodes", s.withAuth(s.nodesCreate))
 	mux.HandleFunc("POST /api/nodes/{id}/connect", s.withAuth(s.nodesConnect))

@@ -48,6 +48,7 @@ type Engine struct {
 	limit   *ratelimit.Limiter
 	// forwards bounds upstream queries in flight; a flood of unknown names cannot open unbounded sockets.
 	forwards chan struct{}
+	cache    *cache
 }
 
 func NewEngine(log *slog.Logger) *Engine {
@@ -59,6 +60,7 @@ func NewEngine(log *slog.Logger) *Engine {
 		log:      log,
 		limit:    ratelimit.New(defaultRateQPS),
 		forwards: make(chan struct{}, defaultForwardMax),
+		cache:    newCache(),
 	}
 	e.enabled.Store(true)
 	return e
@@ -253,12 +255,27 @@ func (e *Engine) Resolve(client netip.Addr, req *mdns.Msg) *mdns.Msg {
 		if len(c.Snap.Upstreams) == 0 {
 			resp = reply(req, mdns.RcodeServerFailure, nil, 0)
 			d.Action = ActionFail
-		} else if fwd, err := e.forward(req, c.Snap.Upstreams); err != nil {
-			e.log.Warn("forward", "err", err, "qname", q.Name)
-			resp = reply(req, mdns.RcodeServerFailure, nil, 0)
-			d.Action = ActionFail
 		} else {
-			resp = fwd
+			key := cacheKey(q.Name, q.Qtype)
+			now := time.Now()
+			if hit := e.cache.get(key, req, now); hit != nil {
+				resp = hit
+				d.Action = ActionCached
+			} else if fwd, err := e.cache.flightDo(key, func() (*mdns.Msg, error) {
+				msg, err := e.forward(req, c.Snap.Upstreams)
+				if err != nil {
+					return nil, err
+				}
+				e.cache.put(key, msg, now)
+				return msg, nil
+			}); err != nil {
+				e.log.Warn("forward", "err", err, "qname", q.Name)
+				resp = reply(req, mdns.RcodeServerFailure, nil, 0)
+				d.Action = ActionFail
+			} else {
+				fwd.Id = req.Id
+				resp = fwd
+			}
 		}
 	default:
 		resp = reply(req, mdns.RcodeServerFailure, nil, 0)

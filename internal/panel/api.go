@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"dnsmarty/internal/snapshot"
 	"dnsmarty/internal/store"
@@ -205,7 +207,14 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", "Список узлов не прочитан.")
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	st, _ := s.store.Settings(r.Context())
+	window := store.LiveWindowSec(st.PullIntervalSec)
+	out := make([]nodeView, len(rows))
+	for i, n := range rows {
+		nu := n.AgentVersion != "" && n.AgentVersion != s.opts.Version
+		out[i] = nodeView{Node: n, NeedsUpdate: nu, LiveWindowSec: window}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) nodesCreate(w http.ResponseWriter, r *http.Request) {
@@ -404,19 +413,39 @@ func (s *Server) clientsDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
-	dnsLogs, err := s.store.DNSLogs(r.Context(), q, ip)
-	if err != nil {
-		s.fail(w, r, err)
-		return
+	q := r.URL.Query()
+	name := strings.TrimSpace(q.Get("q"))
+	ip := strings.TrimSpace(q.Get("ip"))
+	kind := strings.TrimSpace(q.Get("kind"))
+	switch kind {
+	case "dns":
+		rows, next, err := s.store.DNSLogs(r.Context(), name, ip, strings.TrimSpace(q.Get("decision")), parsePage(r, 100))
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"rows": rows, "next": next})
+	case "proxy":
+		rows, next, err := s.store.ProxyLogs(r.Context(), name, ip, strings.TrimSpace(q.Get("status")), parsePage(r, 100))
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"rows": rows, "next": next})
+	default:
+		// No kind: the first page of each table, so the current UI keeps working.
+		dns, _, err := s.store.DNSLogs(r.Context(), name, ip, "", parsePage(r, 200))
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		proxy, _, err := s.store.ProxyLogs(r.Context(), name, ip, "", parsePage(r, 200))
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"dns": map[string]any{"rows": dns}, "proxy": map[string]any{"rows": proxy}})
 	}
-	proxyLogs, err := s.store.ProxyLogs(r.Context(), q, ip)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"dns": dnsLogs, "proxy": proxyLogs})
 }
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
@@ -487,12 +516,65 @@ func (s *Server) upstreamDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) auditLog(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.Audit(r.Context())
+	rows, next, err := s.store.Audit(r.Context(), parsePage(r, 200))
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Журнал аудита не прочитан.")
+		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	writeJSON(w, http.StatusOK, map[string]any{"rows": rows, "next": next})
+}
+
+// parsePage reads the keyset cursor from the query string. def is the default page size.
+func parsePage(r *http.Request, def int) store.Page {
+	q := r.URL.Query()
+	limit := def
+	if raw := q.Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	p := store.Page{Limit: limit}
+	if raw := q.Get("before"); raw != "" {
+		if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+			p.Before = t
+		}
+	}
+	if id, err := strconv.ParseInt(q.Get("before_id"), 10, 64); err == nil {
+		p.BeforeID = id
+	}
+	return p
+}
+
+// seriesStep picks the chart resolution: one minute for short windows, coarser for a day.
+func seriesStep(window time.Duration) time.Duration {
+	switch {
+	case window <= time.Hour:
+		return time.Minute
+	case window <= 6 * time.Hour:
+		return 5 * time.Minute
+	default:
+		return 15 * time.Minute
+	}
+}
+
+func (s *Server) overviewSeries(w http.ResponseWriter, r *http.Request) {
+	windows := map[string]time.Duration{
+		"1h": time.Hour, "6h": 6 * time.Hour, "24h": 24 * time.Hour,
+	}
+	window, ok := windows[strings.TrimSpace(r.URL.Query().Get("window"))]
+	if !ok {
+		window = time.Hour
+	}
+	step := seriesStep(window)
+	points, err := s.store.Series(r.Context(), window, step)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"step_sec": int(step.Seconds()),
+		"points":   points,
+	})
 }
 
 // setCookie writes the session cookie. Secure comes from configuration, never from a request header
@@ -517,4 +599,11 @@ func proxyOnly(rows []store.Node) []store.Node {
 		}
 	}
 	return out
+}
+
+// nodeView adds version and liveness hints the UI cannot compute from the raw row.
+type nodeView struct {
+	store.Node
+	NeedsUpdate   bool `json:"needs_update"`
+	LiveWindowSec int  `json:"live_window_sec"`
 }

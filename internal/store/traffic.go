@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ type ProxyReport struct {
 }
 
 type DNSLog struct {
+	ID       int64     `json:"id"`
 	At       time.Time `json:"at"`
 	ClientIP string    `json:"client_ip"`
 	Name     string    `json:"name"`
@@ -46,6 +48,7 @@ type DNSLog struct {
 }
 
 type ProxyLog struct {
+	ID        int64     `json:"id"`
 	At        time.Time `json:"at"`
 	ClientIP  string    `json:"client_ip"`
 	SNI       string    `json:"sni"`
@@ -56,6 +59,7 @@ type ProxyLog struct {
 }
 
 type AuditRow struct {
+	ID     int64     `json:"id"`
 	At     time.Time `json:"at"`
 	Actor  string    `json:"actor"`
 	Action string    `json:"action"`
@@ -82,6 +86,28 @@ type Overview struct {
 	Nodes      []Node   `json:"nodes"`
 	BayProxies []Node   `json:"bay_proxies"`
 	Rows       []BayRow `json:"rows"`
+}
+
+// Page is a keyset cursor: rows older than (Before, BeforeID), newest first.
+type Page struct {
+	Before   time.Time
+	BeforeID int64
+	Limit    int
+}
+
+// Cursor is the position to fetch the next page from.
+type Cursor struct {
+	At time.Time `json:"at"`
+	ID int64     `json:"id"`
+}
+
+// SeriesPoint is one time bucket of the overview chart.
+type SeriesPoint struct {
+	T        time.Time `json:"t"`
+	DNS      int64     `json:"dns"`
+	Refused  int64     `json:"refused"`
+	Sessions int64     `json:"sessions"`
+	Bytes    int64     `json:"bytes"`
 }
 
 // insertChunk bounds one COPY. The agent buffers up to 2000 rows per kind between pushes.
@@ -320,90 +346,238 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	return o, nil
 }
 
-func (s *Store) DNSLogs(ctx context.Context, name, ip string) ([]DNSLog, error) {
-	where, args, err := logFilter(name, ip, "qname")
+func (s *Store) DNSLogs(ctx context.Context, name, ip, decision string, p Page) ([]DNSLog, *Cursor, error) {
+	clauses, args, err := dnsFilter(name, ip, decision)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	q := `SELECT at, coalesce(host(client_ip), ''), qname, qtype, rcode, decision FROM dns_hit WHERE ` + where + ` ORDER BY at DESC LIMIT 200`
-	rows, err := s.pool.Query(ctx, q, args...)
+	clauses, args = pageClause(p, clauses, args)
+	rows, err := s.pool.Query(ctx, `SELECT id, at, coalesce(host(client_ip), ''), qname, qtype, rcode, decision FROM dns_hit WHERE `+strings.Join(clauses, " AND ")+` ORDER BY at DESC, id DESC LIMIT `+strconv.Itoa(p.Limit+1), args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	out, cur, err := scanDNS(rows, p.Limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, cur, nil
+}
+
+func (s *Store) ProxyLogs(ctx context.Context, name, ip, status string, p Page) ([]ProxyLog, *Cursor, error) {
+	clauses, args, err := proxyFilter(name, ip, status)
+	if err != nil {
+		return nil, nil, err
+	}
+	clauses, args = pageClause(p, clauses, args)
+	rows, err := s.pool.Query(ctx, `SELECT id, at, coalesce(host(client_ip), ''), sni, bytes_up, bytes_down, status, dial_error FROM proxy_session WHERE `+strings.Join(clauses, " AND ")+` ORDER BY at DESC, id DESC LIMIT `+strconv.Itoa(p.Limit+1), args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	out, cur, err := scanProxy(rows, p.Limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, cur, nil
+}
+
+func (s *Store) Audit(ctx context.Context, p Page) ([]AuditRow, *Cursor, error) {
+	clauses, args := pageClause(p, []string{"TRUE"}, nil)
+	rows, err := s.pool.Query(ctx, `SELECT id, at, actor, action, detail::text FROM audit_log WHERE `+strings.Join(clauses, " AND ")+` ORDER BY at DESC, id DESC LIMIT `+strconv.Itoa(p.Limit+1), args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	out, cur, err := scanAudit(rows, p.Limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, cur, nil
+}
+
+// Series returns one point per step across the window, newest last, with zero buckets filled in.
+// It groups DNS hits and proxy sessions by time, aligned to the Unix epoch so buckets are stable.
+func (s *Store) Series(ctx context.Context, window, step time.Duration) ([]SeriesPoint, error) {
+	rows, err := s.pool.Query(ctx, `
+		WITH d AS (
+			SELECT date_bin(make_interval(secs => $2), at, timestamptz '2000-01-01') AS t,
+			       count(*) AS n, count(*) FILTER (WHERE decision = 'acl') AS ref
+			FROM dns_hit
+			WHERE at > now() - make_interval(secs => $1)
+			GROUP BY 1
+		), p AS (
+			SELECT date_bin(make_interval(secs => $2), at, timestamptz '2000-01-01') AS t,
+			       count(*) AS n, coalesce(sum(bytes_up + bytes_down), 0) AS b
+			FROM proxy_session
+			WHERE at > now() - make_interval(secs => $1)
+			GROUP BY 1
+		)
+		SELECT coalesce(d.t, p.t), coalesce(d.n, 0), coalesce(d.ref, 0), coalesce(p.n, 0), coalesce(p.b, 0)
+		FROM d FULL OUTER JOIN p ON d.t = p.t
+		ORDER BY 1
+	`, window.Seconds(), step.Seconds())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []DNSLog{}
+	buckets := map[time.Time]*SeriesPoint{}
 	for rows.Next() {
-		var row DNSLog
-		if err := rows.Scan(&row.At, &row.ClientIP, &row.Name, &row.QType, &row.Rcode, &row.Decision); err != nil {
+		var t time.Time
+		var pt SeriesPoint
+		if err := rows.Scan(&t, &pt.DNS, &pt.Refused, &pt.Sessions, &pt.Bytes); err != nil {
 			return nil, err
 		}
-		out = append(out, row)
+		pt.T = t
+		buckets[t] = &pt
 	}
-	return out, rows.Err()
-}
-
-func (s *Store) ProxyLogs(ctx context.Context, name, ip string) ([]ProxyLog, error) {
-	where, args, err := logFilter(name, ip, "sni")
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	q := `SELECT at, coalesce(host(client_ip), ''), sni, bytes_up, bytes_down, status, dial_error FROM proxy_session WHERE ` + where + ` ORDER BY at DESC LIMIT 200`
-	rows, err := s.pool.Query(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []ProxyLog{}
-	for rows.Next() {
-		var row ProxyLog
-		if err := rows.Scan(&row.At, &row.ClientIP, &row.SNI, &row.BytesUp, &row.BytesDown, &row.Status, &row.DialError); err != nil {
-			return nil, err
+	out := []SeriesPoint{}
+	now := time.Now()
+	end := now.Truncate(step)
+	start := end.Add(-window)
+	for t := start; !t.After(end); t = t.Add(step) {
+		if pt, ok := buckets[t]; ok {
+			out = append(out, *pt)
+		} else {
+			out = append(out, SeriesPoint{T: t})
 		}
-		out = append(out, row)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-func (s *Store) Audit(ctx context.Context) ([]AuditRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT at, actor, action, detail::text FROM audit_log ORDER BY at DESC LIMIT 200`)
-	if err != nil {
-		return nil, err
+// pageClause appends the keyset condition for a page cursor.
+func pageClause(p Page, clauses []string, args []any) ([]string, []any) {
+	if p.Limit < 1 {
+		p.Limit = 100
 	}
-	defer rows.Close()
-	out := []AuditRow{}
+	if !p.Before.IsZero() {
+		args = append(args, p.Before, p.BeforeID)
+		clauses = append(clauses, fmt.Sprintf("(at, id) < ($%d::timestamptz, $%d)", len(args)-1, len(args)))
+	}
+	return clauses, args
+}
+
+// scanRows reads up to limit+1 rows and, when the extra row exists, builds the next cursor
+// from it. The caller keeps limit rows and uses the cursor to continue.
+func scanDNS(rows pgx.Rows, limit int) ([]DNSLog, *Cursor, error) {
+	out := make([]DNSLog, 0, limit)
 	for rows.Next() {
-		var row AuditRow
-		if err := rows.Scan(&row.At, &row.Actor, &row.Action, &row.Detail); err != nil {
-			return nil, err
+		var r DNSLog
+		if err := rows.Scan(&r.ID, &r.At, &r.ClientIP, &r.Name, &r.QType, &r.Rcode, &r.Decision); err != nil {
+			return nil, nil, err
 		}
-		out = append(out, row)
+		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	var cur *Cursor
+	if len(out) > limit {
+		last := out[limit]
+		cur = &Cursor{At: last.At, ID: last.ID}
+		out = out[:limit]
+	}
+	return out, cur, nil
 }
 
-func logFilter(name, ip, nameCol string) (string, []any, error) {
-	if nameCol != "qname" && nameCol != "sni" {
-		return "", nil, fmt.Errorf("column")
+func scanProxy(rows pgx.Rows, limit int) ([]ProxyLog, *Cursor, error) {
+	out := make([]ProxyLog, 0, limit)
+	for rows.Next() {
+		var r ProxyLog
+		if err := rows.Scan(&r.ID, &r.At, &r.ClientIP, &r.SNI, &r.BytesUp, &r.BytesDown, &r.Status, &r.DialError); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	var cur *Cursor
+	if len(out) > limit {
+		last := out[limit]
+		cur = &Cursor{At: last.At, ID: last.ID}
+		out = out[:limit]
+	}
+	return out, cur, nil
+}
+
+func scanAudit(rows pgx.Rows, limit int) ([]AuditRow, *Cursor, error) {
+	out := make([]AuditRow, 0, limit)
+	for rows.Next() {
+		var r AuditRow
+		if err := rows.Scan(&r.ID, &r.At, &r.Actor, &r.Action, &r.Detail); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	var cur *Cursor
+	if len(out) > limit {
+		last := out[limit]
+		cur = &Cursor{At: last.At, ID: last.ID}
+		out = out[:limit]
+	}
+	return out, cur, nil
+}
+
+func dnsFilter(name, ip, decision string) ([]string, []any, error) {
 	clauses := []string{"TRUE"}
 	var args []any
 	if name != "" {
 		args = append(args, likeContains(name))
-		clauses = append(clauses, fmt.Sprintf("%s ILIKE $%d ESCAPE '\\'", nameCol, len(args)))
+		clauses = append(clauses, fmt.Sprintf("qname ILIKE $%d ESCAPE '\\'", len(args)))
 	}
+	if decision != "" {
+		args = append(args, decision)
+		clauses = append(clauses, fmt.Sprintf("decision = $%d", len(args)))
+	}
+	if extra, ea, err := ipClause(ip, len(args)); err != nil {
+		return nil, nil, err
+	} else {
+		clauses = append(clauses, extra...)
+		args = append(args, ea...)
+	}
+	return clauses, args, nil
+}
+
+func proxyFilter(name, ip, status string) ([]string, []any, error) {
+	clauses := []string{"TRUE"}
+	var args []any
+	if name != "" {
+		args = append(args, likeContains(name))
+		clauses = append(clauses, fmt.Sprintf("sni ILIKE $%d ESCAPE '\\'", len(args)))
+	}
+	if status != "" {
+		args = append(args, status)
+		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
+	}
+	if extra, ea, err := ipClause(ip, len(args)); err != nil {
+		return nil, nil, err
+	} else {
+		clauses = append(clauses, extra...)
+		args = append(args, ea...)
+	}
+	return clauses, args, nil
+}
+
+// ipClause builds the client_ip test with the next placeholder number base.
+func ipClause(ip string, base int) ([]string, []any, error) {
 	ip = strings.TrimSpace(ip)
-	if ip != "" {
-		if _, n, err := net.ParseCIDR(ip); err == nil {
-			args = append(args, n.String())
-			clauses = append(clauses, fmt.Sprintf("client_ip <<= $%d::inet", len(args)))
-		} else if parsed := net.ParseIP(ip); parsed != nil {
-			args = append(args, parsed.String())
-			clauses = append(clauses, fmt.Sprintf("client_ip = $%d::inet", len(args)))
-		} else {
-			return "", nil, fmt.Errorf("%w: IP", ErrInvalid)
-		}
+	if ip == "" {
+		return nil, nil, nil
 	}
-	return strings.Join(clauses, " AND "), args, nil
+	if _, n, err := net.ParseCIDR(ip); err == nil {
+		return []string{fmt.Sprintf("client_ip <<= $%d::inet", base+1)}, []any{n.String()}, nil
+	}
+	if parsed := net.ParseIP(ip); parsed != nil {
+		return []string{fmt.Sprintf("client_ip = $%d::inet", base+1)}, []any{parsed.String()}, nil
+	}
+	return nil, nil, fmt.Errorf("%w: IP", ErrInvalid)
 }
 
 func likeContains(s string) string {

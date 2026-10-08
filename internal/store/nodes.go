@@ -40,6 +40,16 @@ const liveWindow = `make_interval(secs => (SELECT greatest(30, 3 * pull_interval
 
 const nodeFresh = `(enabled AND last_seen_at IS NOT NULL AND last_seen_at > now() - ` + liveWindow + `)`
 
+// LiveWindowSec mirrors the SQL liveWindow expression: three push intervals, at least 30 s.
+// The panel exposes it to the UI and to the "needs update" badge computation.
+func LiveWindowSec(pullInterval int) int {
+	w := 3 * pullInterval
+	if w < 30 {
+		w = 30
+	}
+	return w
+}
+
 type NodeInput struct {
 	Name      string `json:"name"`
 	Role      string `json:"role"`

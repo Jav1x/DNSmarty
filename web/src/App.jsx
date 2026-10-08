@@ -645,7 +645,7 @@ function Logs() {
         <h2>DNS</h2>
         <table>
           <thead><tr><th>{t("time")}</th><th>{t("clientIp")}</th><th>{t("name")}</th><th>{t("type")}</th><th>{t("code")}</th><th>{t("decision")}</th></tr></thead>
-          <tbody>{data?.dns?.map((row, i) => <tr key={i}><td>{row.at}</td><td>{row.client_ip}</td><td>{row.name}</td><td>{row.qtype}</td><td>{row.rcode}</td><td>{row.decision}</td></tr>)}</tbody>
+          <tbody>{data?.dns?.rows?.map((row, i) => <tr key={i}><td>{row.at}</td><td>{row.client_ip}</td><td>{row.name}</td><td>{row.qtype}</td><td>{row.rcode}</td><td>{row.decision}</td></tr>)}</tbody>
         </table>
       </section>
       <section className="mod">
@@ -653,7 +653,7 @@ function Logs() {
         <p className="empty">{t("noBody")}</p>
         <table>
           <thead><tr><th>{t("time")}</th><th>{t("clientIp")}</th><th>SNI</th><th>{t("bytes")}</th><th>{t("status")}</th><th>Dial</th></tr></thead>
-          <tbody>{data?.proxy?.map((row, i) => <tr key={i}><td>{row.at}</td><td>{row.client_ip}</td><td>{row.sni}</td><td>{row.bytes_up} / {row.bytes_down}</td><td>{row.status}</td><td>{row.dial_error}</td></tr>)}</tbody>
+          <tbody>{data?.proxy?.rows?.map((row, i) => <tr key={i}><td>{row.at}</td><td>{row.client_ip}</td><td>{row.sni}</td><td>{row.bytes_up} / {row.bytes_down}</td><td>{row.status}</td><td>{row.dial_error}</td></tr>)}</tbody>
         </table>
       </section>
     </>
@@ -824,13 +824,14 @@ function Account() {
 function Audit() {
   const { t } = useI18n();
   const { data, error } = useLoad("/api/audit");
+  const rows = data?.rows || [];
   return (
     <section className="mod">
       <h2>{t("auditTitle")}</h2>
       <Err text={error} />
       <table>
         <thead><tr><th>{t("time")}</th><th>{t("who")}</th><th>{t("action")}</th><th>{t("detail")}</th></tr></thead>
-        <tbody>{(data || []).map((row, i) => <tr key={i}><td>{row.at}</td><td>{row.actor}</td><td>{row.action}</td><td>{row.detail}</td></tr>)}</tbody>
+        <tbody>{rows.map((row, i) => <tr key={i}><td>{row.at}</td><td>{row.actor}</td><td>{row.action}</td><td>{row.detail}</td></tr>)}</tbody>
       </table>
     </section>
   );

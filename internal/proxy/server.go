@@ -14,12 +14,21 @@ import (
 
 	mdns "github.com/miekg/dns"
 
+	"dnsmarty/internal/lru"
 	"dnsmarty/internal/metrics"
 	"dnsmarty/internal/netx"
 	"dnsmarty/internal/snapshot"
 )
 
 const defaultMaxConns = 4096
+
+// resolveCacheSize bounds cached DNS answers for origins.
+const resolveCacheSize = 4096
+
+// A resolved name is kept for at most a minute: long enough to spare the upstream
+// during a burst on one name, short enough that a moved origin is followed soon.
+const resolveTTL = 60 * time.Second
+const resolveNegTTL = 5 * time.Second
 
 type Report struct {
 	At        time.Time
@@ -29,6 +38,39 @@ type Report struct {
 	BytesDown int64
 	Status    string
 	DialError string
+}
+
+// resolved is one cached lookup result, positive or negative.
+type resolved struct {
+	ips     []net.IP
+	expires time.Time
+	neg     bool
+}
+
+// resolveCached returns the addresses for name from the cache when fresh, otherwise
+// asks the upstreams and stores the result. A negative result is cached briefly so a
+// non-resolving name does not trigger a lookup on every connection.
+func (s *Server) resolveCached(name string, upstreams []string) ([]net.IP, error) {
+	key := snapshot.Normalize(name)
+	now := time.Now()
+	s.resMu.Lock()
+	if r, ok := s.res.Get(key); ok && now.Before(r.expires) {
+		s.resMu.Unlock()
+		if r.neg {
+			return nil, errors.New("no address")
+		}
+		return r.ips, nil
+	}
+	s.resMu.Unlock()
+	ips, err := resolveOrigin(name, upstreams)
+	ttl := resolveTTL
+	if err != nil {
+		ttl = resolveNegTTL
+	}
+	s.resMu.Lock()
+	s.res.Add(key, resolved{ips: ips, expires: now.Add(ttl), neg: err != nil})
+	s.resMu.Unlock()
+	return ips, err
 }
 
 // compiled is a snapshot with its client lists parsed once.
@@ -54,6 +96,9 @@ type Server struct {
 	aclMu   sync.Mutex
 	aclSeen map[string]time.Time
 
+	resMu  sync.Mutex
+	res    *lru.Cache[string, resolved]
+
 	transport *http.Transport
 }
 
@@ -68,6 +113,7 @@ func New(log *slog.Logger, httpAddr, httpsAddr string) *Server {
 		https:   httpsAddr,
 		active:  map[string]int{},
 		aclSeen: map[string]time.Time{},
+		res:     lru.New[string, resolved](resolveCacheSize),
 	}
 	s.maxConns.Store(defaultMaxConns)
 	s.transport = s.newTransport()
@@ -290,7 +336,7 @@ func (s *Server) handleTLS(conn *gatedConn) {
 // dialOrigin resolves name through the snapshot upstreams and dials the first address
 // that is not a special-purpose range or the node itself.
 func (s *Server) dialOrigin(ctx context.Context, snap *snapshot.ProxySnap, name, port string) (net.Conn, error) {
-	ips, err := resolveOrigin(name, snap.Upstreams)
+	ips, err := s.resolveCached(name, snap.Upstreams)
 	if err != nil {
 		return nil, err
 	}

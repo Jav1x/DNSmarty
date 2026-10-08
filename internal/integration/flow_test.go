@@ -210,6 +210,34 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatalf("bulk=%d skew=%d", bulk, skew)
 	}
 
+	// Series: the bulk insert lands in the last minute bucket.
+	points, err := st.Series(ctx, time.Hour, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) < 2 {
+		t.Fatalf("series points: %d", len(points))
+	}
+	last := points[len(points)-1]
+	if last.DNS < 2001 {
+		t.Fatalf("last bucket dns=%d", last.DNS)
+	}
+
+	// Keyset pagination: the first page ends with a cursor, the second continues past it.
+	page := store.Page{Limit: 5}
+	rows, cur, err := st.DNSLogs(ctx, "bulk", "", "", page)
+	if err != nil || len(rows) != 5 || cur == nil {
+		t.Fatalf("dns page1: rows=%d cur=%v err=%v", len(rows), cur, err)
+	}
+	page2 := store.Page{Limit: 5, Before: cur.At, BeforeID: cur.ID}
+	rows2, cur2, err := st.DNSLogs(ctx, "bulk", "", "", page2)
+	if err != nil || len(rows2) == 0 || rows2[0].ID == rows[0].ID {
+		t.Fatalf("dns page2: rows=%d err=%v", len(rows2), err)
+	}
+	if cur2 == nil {
+		t.Fatal("page2 has no cursor")
+	}
+
 	if err := st.EnsureAdmin(ctx, "admin", "panel-pass-long"); err != nil {
 		t.Fatal(err)
 	}

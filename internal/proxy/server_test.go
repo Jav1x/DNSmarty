@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	mdns "github.com/miekg/dns"
 
 	"dnsmarty/internal/snapshot"
 )
@@ -208,5 +211,54 @@ func TestClientKeyIPv6Slash64(t *testing.T) {
 	c := clientKey(addrOf(&net.TCPAddr{IP: net.ParseIP("2001:db8:1:3::1")}))
 	if a != b || a == c {
 		t.Fatalf("a=%s b=%s c=%s", a, b, c)
+	}
+}
+
+// TestResolveCached queries a fake upstream once for a name, then again from the cache.
+func TestResolveCached(t *testing.T) {
+	var n int64
+	handler := mdns.HandlerFunc(func(w mdns.ResponseWriter, r *mdns.Msg) {
+		atomic.AddInt64(&n, 1)
+		m := new(mdns.Msg)
+		m.SetReply(r)
+		// Only c.test. resolves; anything else comes back empty, which the proxy treats as "no address".
+		if r.Question[0].Qtype == mdns.TypeA && r.Question[0].Name == "c.test." {
+			m.Answer = append(m.Answer, &mdns.A{
+				Hdr: mdns.RR_Header{Name: r.Question[0].Name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 120},
+				A:   net.IPv4(203, 0, 113, 55),
+			})
+		}
+		_ = w.WriteMsg(m)
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &mdns.Server{Listener: ln, Handler: handler, Net: "tcp"}
+	go func() { _ = srv.ActivateAndServe() }()
+	t.Cleanup(func() { _ = srv.Shutdown() })
+
+	s := New(nil, "", "")
+	ips, err := s.resolveCached("c.test.", []string{ln.Addr().String()})
+	if err != nil || len(ips) != 1 || !ips[0].Equal(net.IPv4(203, 0, 113, 55)) {
+		t.Fatalf("first: %v %v", ips, err)
+	}
+	// A and AAAA were asked once each; the repeat must not call the upstream again.
+	if _, err := s.resolveCached("C.TEST.", []string{ln.Addr().String()}); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt64(&n); got != 2 {
+		t.Fatalf("upstream called %d times", got)
+	}
+	// A name that does not resolve is cached negative: the repeat must not call the upstream again.
+	if _, err := s.resolveCached("none.test.", []string{ln.Addr().String()}); err == nil {
+		t.Fatal("negative resolve вернул успех")
+	}
+	afterMiss := atomic.LoadInt64(&n)
+	if _, err := s.resolveCached("none.test.", []string{ln.Addr().String()}); err == nil {
+		t.Fatal("повторный negative resolve вернул успех")
+	}
+	if atomic.LoadInt64(&n) != afterMiss {
+		t.Fatalf("negative не закэширован: %d vs %d", n, afterMiss)
 	}
 }
