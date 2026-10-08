@@ -12,7 +12,9 @@ One Go image (`panel`, `dns`, `proxy`, `migrate`) and a React UI. No third-party
 - DNS on 53, DoT on 853, and DoH on 8443 share one decision path.
 - SNI proxy splices TCP and does not terminate TLS. No UDP or QUIC.
 - Several proxies, dropped from rotation when the panel cannot reach them for 30 seconds.
-- Clients outside a whitelist get `REFUSED` once a whitelist exists. An empty whitelist allows every client. A blacklist always refuses. The bootstrap CIDR stays allowed.
+- Clients outside a whitelist get `REFUSED` once a whitelist exists. An empty whitelist allows every client. A blacklist always refuses. The bootstrap CIDR stays allowed. The proxy applies the same lists.
+- UDP answers are rate-limited per client network (/24, /56) and truncated to what the client accepts. `ANY` gets a single HINFO (RFC 8482).
+- The panel and agents authenticate each other with certificates derived from the node key (TLS 1.3).
 - Node keys are shown once and stored only as ciphertext.
 
 ## Requirements
@@ -63,7 +65,7 @@ Files live in `/opt/dnsmarty-dns` or `/opt/dnsmarty-proxy`. `dnsmarty-node updat
 
 ## Clients and names
 
-DNS answers everyone until you add a whitelist. A whitelist limits queries to those networks. A blacklist always refuses. The bootstrap CIDR stays allowed.
+DNS and the proxy answer everyone until you add a whitelist. That makes the node an open resolver: keep the rate limit in Settings on (50 answers per second per client network by default), or add a whitelist. A whitelist limits both to those networks. A blacklist always refuses. The bootstrap CIDR stays allowed.
 
 Set an upstream recursive resolver, for example `1.1.1.1:53`. DNS and the proxy query it directly, not through their own port 53.
 

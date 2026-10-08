@@ -108,7 +108,9 @@ func TestPostgresDecisions(t *testing.T) {
 	}
 
 	eng := dns.NewEngine(nil)
-	eng.SetSnapshot(&snap)
+	if err := eng.SetSnapshot(&snap); err != nil {
+		t.Fatal(err)
+	}
 
 	q := new(mdns.Msg)
 	q.SetQuestion("www.example.com.", mdns.TypeA)
@@ -232,6 +234,10 @@ func TestPostgresDecisions(t *testing.T) {
 	before := proxySrv.Snapshot()
 	if before == nil || before.Version != 2 {
 		t.Fatalf("ожидали v2 у агента: %+v", before)
+	}
+	// The proxy gets the same client lists as DNS.
+	if len(before.Allow) != 1 || before.Allow[0] != "127.0.0.1/32" {
+		t.Fatalf("списки клиентов не дошли до прокси: %+v", before.Allow)
 	}
 	// A restored database forgets v2 and would publish v1 again. The agent rejects it as old,
 	// the panel notices it never published the agent's version and starts a new epoch.

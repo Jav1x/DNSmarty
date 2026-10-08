@@ -537,7 +537,7 @@ DOT_ADDR=:853
 DOH_ADDR=:8443
 PROXY_HTTP_ADDR=:80
 PROXY_HTTPS_ADDR=:443
-METRICS_ADDR=:${metrics}
+METRICS_ADDR=127.0.0.1:${metrics}
 EOF
   chmod 600 "$dir/.env"
   if [[ "$role" == "dns" ]]; then

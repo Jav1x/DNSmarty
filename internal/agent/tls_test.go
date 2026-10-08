@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -162,7 +163,7 @@ func TestStaleVersionRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := testQuery()
-	if resp := eng.Resolve(net.ParseIP("127.0.0.1"), q); resp.Rcode == 0 {
+	if resp := eng.Resolve(netip.MustParseAddr("127.0.0.1"), q); resp.Rcode == 0 {
 		t.Fatal("выключенный узел ответил")
 	}
 	// A new epoch restarts numbering.

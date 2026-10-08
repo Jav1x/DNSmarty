@@ -81,6 +81,7 @@ type Settings struct {
 	DialTimeoutMs   int    `json:"dial_timeout_ms"`
 	IdleTimeoutMs   int    `json:"idle_timeout_ms"`
 	AgentImage      string `json:"agent_image"`
+	DNSRateQPS      int    `json:"dns_rate_qps"`
 }
 
 func (s *Store) ListDomains(ctx context.Context) ([]Domain, error) {
@@ -455,9 +456,9 @@ func (s *Store) DeleteUpstream(ctx context.Context, actor, id string) error {
 func (s *Store) Settings(ctx context.Context) (Settings, error) {
 	var st Settings
 	err := s.pool.QueryRow(ctx, `
-		SELECT ttl, pull_interval_sec, retention_days, bootstrap_cidr, session_limit, dial_timeout_ms, idle_timeout_ms, agent_image
+		SELECT ttl, pull_interval_sec, retention_days, bootstrap_cidr, session_limit, dial_timeout_ms, idle_timeout_ms, agent_image, dns_rate_qps
 		FROM setting WHERE id = 1
-	`).Scan(&st.TTL, &st.PullIntervalSec, &st.RetentionDays, &st.Bootstrap, &st.SessionLimit, &st.DialTimeoutMs, &st.IdleTimeoutMs, &st.AgentImage)
+	`).Scan(&st.TTL, &st.PullIntervalSec, &st.RetentionDays, &st.Bootstrap, &st.SessionLimit, &st.DialTimeoutMs, &st.IdleTimeoutMs, &st.AgentImage, &st.DNSRateQPS)
 	return st, err
 }
 
@@ -469,9 +470,9 @@ func (s *Store) SaveSettings(ctx context.Context, actor string, st Settings) err
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE setting SET ttl = $1, pull_interval_sec = $2, retention_days = $3, bootstrap_cidr = $4,
-			       session_limit = $5, dial_timeout_ms = $6, idle_timeout_ms = $7, agent_image = $8
+			       session_limit = $5, dial_timeout_ms = $6, idle_timeout_ms = $7, agent_image = $8, dns_rate_qps = $9
 			WHERE id = 1
-		`, st.TTL, st.PullIntervalSec, st.RetentionDays, norm, st.SessionLimit, st.DialTimeoutMs, st.IdleTimeoutMs, st.AgentImage)
+		`, st.TTL, st.PullIntervalSec, st.RetentionDays, norm, st.SessionLimit, st.DialTimeoutMs, st.IdleTimeoutMs, st.AgentImage, st.DNSRateQPS)
 		if err != nil {
 			return err
 		}
@@ -570,6 +571,9 @@ func normalizeSettings(st *Settings) (string, error) {
 	}
 	if st.IdleTimeoutMs < 1000 || st.IdleTimeoutMs > 600000 {
 		return "", fmt.Errorf("%w: таймаут idle", ErrInvalid)
+	}
+	if st.DNSRateQPS < 0 || st.DNSRateQPS > 100000 {
+		return "", fmt.Errorf("%w: лимит DNS", ErrInvalid)
 	}
 	st.AgentImage = strings.TrimSpace(st.AgentImage)
 	if st.AgentImage == "" {

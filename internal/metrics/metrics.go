@@ -41,7 +41,18 @@ func init() {
 func Serve(ctx context.Context, addr string, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", promhttp.Handler())
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	// Liveness for container healthchecks; distroless has no curl, the binary probes this.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -684,6 +684,7 @@ function Settings() {
             <div><label>{t("sessionsPerIp")}</label><input name="session_limit" defaultValue={s.session_limit} /></div>
             <div><label>{t("dialMs")}</label><input name="dial_timeout_ms" defaultValue={s.dial_timeout_ms} /></div>
             <div><label>{t("idleMs")}</label><input name="idle_timeout_ms" defaultValue={s.idle_timeout_ms} /></div>
+            <div><label>{t("dnsRate")}</label><input name="dns_rate_qps" type="number" min="0" max="100000" defaultValue={s.dns_rate_qps} /></div>
             <div><label>{t("agentImage")}</label><input name="agent_image" defaultValue={s.agent_image} /></div>
           </div>
           <p><button type="submit">{t("save")}</button></p>

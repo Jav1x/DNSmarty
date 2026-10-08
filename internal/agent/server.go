@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dnsmarty/internal/buildinfo"
@@ -118,6 +119,9 @@ func Serve(ctx context.Context, ln net.Listener, cfg Config) error {
 		version = func() int64 { return 0 }
 	}
 	metrics.Stale.Set(1)
+	// lastApply drives the stale gauge: 1 when no snapshot arrived for staleAfter.
+	var lastApply atomic.Int64
+	go watchStale(ctx, &lastApply)
 	// Pushes from a check and from the loop may overlap; the order check needs them serialized.
 	var applyMu sync.Mutex
 	mux := http.NewServeMux()
@@ -142,6 +146,7 @@ func Serve(ctx context.Context, ln net.Listener, cfg Config) error {
 			http.Error(w, "config", http.StatusBadRequest)
 			return
 		}
+		lastApply.Store(time.Now().UnixNano())
 		metrics.Stale.Set(0)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
@@ -173,6 +178,24 @@ func Serve(ctx context.Context, ln net.Listener, cfg Config) error {
 	return err
 }
 
+// staleAfter is three times the longest push interval the panel allows (15 s).
+const staleAfter = 45 * time.Second
+
+func watchStale(ctx context.Context, last *atomic.Int64) {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if l := last.Load(); l == 0 || now.Sub(time.Unix(0, l)) > staleAfter {
+				metrics.Stale.Set(1)
+			}
+		}
+	}
+}
+
 // older reports a snapshot that must not replace the current one.
 // An equal version is applied again: node_enabled changes without a version bump.
 func older(curEpoch string, curVersion int64, epoch string, version int64) bool {
@@ -187,7 +210,9 @@ func ApplyDNS(body []byte, eng *dns.Engine) error {
 	if cur := eng.Snapshot(); cur != nil && older(cur.Epoch, cur.Version, cfg.Epoch, cfg.Version) {
 		return &StaleError{Have: cur.Version}
 	}
-	eng.SetSnapshot(&cfg.DNS)
+	if err := eng.SetSnapshot(&cfg.DNS); err != nil {
+		return err
+	}
 	eng.SetEnabled(cfg.NodeEnabled)
 	return nil
 }
@@ -200,8 +225,7 @@ func ApplyProxy(body []byte, srv *proxy.Server) error {
 	if cur := srv.Snapshot(); cur != nil && older(cur.Epoch, cur.Version, cfg.Epoch, cfg.Version) {
 		return &StaleError{Have: cur.Version}
 	}
-	srv.SetSnapshot(&cfg)
-	return nil
+	return srv.SetSnapshot(&cfg)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

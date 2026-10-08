@@ -8,6 +8,9 @@ import (
 
 var ErrNeedMore = errors.New("need more")
 
+// maxRecord is the largest TLS record payload (2^14) plus the 5-byte header.
+const maxRecord = 5 + 16384
+
 func ParseClientHello(b []byte) (string, error) {
 	if len(b) < 5 {
 		return "", ErrNeedMore
@@ -16,7 +19,7 @@ func ParseClientHello(b []byte) (string, error) {
 		return "", errors.New("not a handshake")
 	}
 	recLen := int(b[3])<<8 | int(b[4])
-	if recLen <= 0 || 5+recLen > 16384 {
+	if recLen <= 0 || 5+recLen > maxRecord {
 		return "", errors.New("bad record")
 	}
 	if len(b) < 5+recLen {
@@ -109,7 +112,7 @@ func parseSNI(b []byte) (string, error) {
 func ReadClientHello(r io.Reader) (sni string, raw []byte, err error) {
 	buf := make([]byte, 0, 512)
 	tmp := make([]byte, 1024)
-	for len(buf) < 16384 {
+	for len(buf) < maxRecord {
 		n, readErr := r.Read(tmp)
 		if n > 0 {
 			buf = append(buf, tmp[:n]...)

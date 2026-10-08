@@ -87,7 +87,7 @@ services:
       DNS_ADDR: ":53"
       DOT_ADDR: ":853"
       DOH_ADDR: ":8443"
-      METRICS_ADDR: ":9101"
+      METRICS_ADDR: "127.0.0.1:9101"
     volumes:
       - ./certs/dns:/certs:ro
     restart: unless-stopped
@@ -103,7 +103,7 @@ services:
       AGENT_ADDR: ${PROXY_AGENT_ADDR:-:9444}
       PROXY_HTTP_ADDR: ":80"
       PROXY_HTTPS_ADDR: ":443"
-      METRICS_ADDR: ":9102"
+      METRICS_ADDR: "127.0.0.1:9102"
     restart: unless-stopped
 
 networks:

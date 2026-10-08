@@ -65,38 +65,19 @@ func (s *Store) ProxySnapshot(ctx context.Context, nodeID string) (snapshot.Prox
 
 func loadDNSBody(ctx context.Context, tx pgx.Tx) (snapshot.DNS, error) {
 	var body snapshot.DNS
-	var ttl, pull int
-	var boot string
-	if err := tx.QueryRow(ctx, `SELECT snapshot_epoch::text, ttl, pull_interval_sec, bootstrap_cidr FROM setting WHERE id = 1`).Scan(&body.Epoch, &ttl, &pull, &boot); err != nil {
+	var ttl, pull, rate int
+	if err := tx.QueryRow(ctx, `SELECT snapshot_epoch::text, ttl, pull_interval_sec, dns_rate_qps FROM setting WHERE id = 1`).Scan(&body.Epoch, &ttl, &pull, &rate); err != nil {
 		return body, err
 	}
 	body.TTL = uint32(ttl)
 	body.PullIntervalSec = pull
-	body.Bootstrap = splitList(boot)
-
-	rows, err := tx.Query(ctx, `SELECT cidr::text, list_kind FROM client_cidr WHERE enabled ORDER BY cidr::text`)
-	if err != nil {
+	body.RateQPS = rate
+	var err error
+	if body.Allow, body.Deny, body.Bootstrap, err = loadACL(ctx, tx); err != nil {
 		return body, err
 	}
-	for rows.Next() {
-		var c, kind string
-		if err := rows.Scan(&c, &kind); err != nil {
-			rows.Close()
-			return body, err
-		}
-		if kind == "deny" {
-			body.Deny = append(body.Deny, c)
-			continue
-		}
-		body.Allow = append(body.Allow, c)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return body, err
-	}
-	rows.Close()
 
-	rows, err = tx.Query(ctx, `SELECT addr FROM upstream ORDER BY ordinal, addr`)
+	rows, err := tx.Query(ctx, `SELECT addr FROM upstream ORDER BY ordinal, addr`)
 	if err != nil {
 		return body, err
 	}
@@ -207,6 +188,9 @@ func loadProxyBody(ctx context.Context, tx pgx.Tx, nodeID string) (snapshot.Prox
 		body.Upstreams = append(body.Upstreams, a)
 	}
 	rows.Close()
+	if body.Allow, body.Deny, body.Bootstrap, err = loadACL(ctx, tx); err != nil {
+		return body, err
+	}
 	if enabled {
 		rows, err = tx.Query(ctx, `
 			SELECT d.name, d.match_kind
@@ -234,6 +218,31 @@ func loadProxyBody(ctx context.Context, tx pgx.Tx, nodeID string) (snapshot.Prox
 	}
 	snapshot.EmptySlicesProxy(&body)
 	return body, nil
+}
+
+// loadACL returns the enabled client lists and the bootstrap CIDRs. DNS and proxy snapshots share them.
+func loadACL(ctx context.Context, tx pgx.Tx) (allow, deny, bootstrap []string, err error) {
+	var boot string
+	if err := tx.QueryRow(ctx, `SELECT bootstrap_cidr FROM setting WHERE id = 1`).Scan(&boot); err != nil {
+		return nil, nil, nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT cidr::text, list_kind FROM client_cidr WHERE enabled ORDER BY cidr::text`)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c, kind string
+		if err := rows.Scan(&c, &kind); err != nil {
+			return nil, nil, nil, err
+		}
+		if kind == "deny" {
+			deny = append(deny, c)
+		} else {
+			allow = append(allow, c)
+		}
+	}
+	return allow, deny, splitList(boot), rows.Err()
 }
 
 func publishDNS(ctx context.Context, tx pgx.Tx, raw []byte) (int64, error) {

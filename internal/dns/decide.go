@@ -3,12 +3,12 @@ package dns
 import (
 	"hash/fnv"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 
 	mdns "github.com/miekg/dns"
 
-	"dnsmarty/internal/netx"
 	"dnsmarty/internal/snapshot"
 )
 
@@ -47,66 +47,87 @@ func (p *Picker) next(key string) int {
 	return v
 }
 
-func Decide(snap *snapshot.DNS, client net.IP, qname string, qtype uint16, pick *Picker) Decision {
-	if snap == nil {
-		return Decision{Action: ActionFail, Rcode: mdns.RcodeServerFailure}
-	}
-	allow, err := netx.ParseCIDRs(snap.Allow)
+// Compiled is a snapshot prepared for the query path: CIDRs parsed once, names indexed.
+type Compiled struct {
+	Snap   *snapshot.DNS
+	acl    *snapshot.ACL
+	fqdn   map[string]*snapshot.Domain
+	suffix map[string]*snapshot.Domain
+}
+
+func Compile(s *snapshot.DNS) (*Compiled, error) {
+	acl, err := snapshot.CompileACL(s.Allow, s.Deny, s.Bootstrap)
 	if err != nil {
+		return nil, err
+	}
+	c := &Compiled{
+		Snap:   s,
+		acl:    acl,
+		fqdn:   map[string]*snapshot.Domain{},
+		suffix: map[string]*snapshot.Domain{},
+	}
+	for i := range s.Domains {
+		d := &s.Domains[i]
+		name := snapshot.Normalize(d.Name)
+		switch d.Match {
+		case snapshot.MatchFQDN:
+			c.fqdn[name] = d
+		case snapshot.MatchSuffix:
+			c.suffix[name] = d
+		}
+	}
+	return c, nil
+}
+
+// Allowed applies the client lists of the snapshot.
+func (c *Compiled) Allowed(client netip.Addr) bool {
+	return c.acl.Allowed(client.Unmap())
+}
+
+// Decide picks the answer for one question. A nil Compiled means no snapshot yet.
+func (c *Compiled) Decide(client netip.Addr, qname string, qtype uint16, pick *Picker) Decision {
+	if c == nil {
 		return Decision{Action: ActionFail, Rcode: mdns.RcodeServerFailure}
 	}
-	deny, err := netx.ParseCIDRs(snap.Deny)
-	if err != nil {
-		return Decision{Action: ActionFail, Rcode: mdns.RcodeServerFailure}
-	}
-	boot, err := netx.ParseCIDRs(snap.Bootstrap)
-	if err != nil {
-		return Decision{Action: ActionFail, Rcode: mdns.RcodeServerFailure}
-	}
-	ttl := snap.TTL
-	if !clientAllowed(client, allow, deny, boot) {
+	ttl := c.Snap.TTL
+	if !c.Allowed(client) {
 		return Decision{Action: ActionRefuse, Rcode: mdns.RcodeRefused, TTL: ttl}
 	}
 	name := snapshot.Normalize(qname)
-	dom := mostSpecific(snap.Domains, name)
+	dom := c.mostSpecific(name)
 	if dom == nil {
 		return Decision{Action: ActionForward, TTL: ttl}
 	}
-	chosen := choose(dom, client, name, pick)
-	if qtype != mdns.TypeA && qtype != mdns.TypeAAAA && qtype != mdns.TypeANY {
+	if qtype != mdns.TypeA && qtype != mdns.TypeAAAA {
+		// The name is ours: other types get NODATA instead of leaking the origin's records.
 		return Decision{Action: ActionLocal, Rcode: mdns.RcodeSuccess, TTL: ttl}
 	}
+	chosen := choose(dom, client, name, pick)
 	return Decision{Action: ActionLocal, Rcode: mdns.RcodeSuccess, IPs: ipsFor(chosen, qtype), TTL: ttl}
 }
 
-func clientAllowed(ip net.IP, allow, deny, boot []net.IPNet) bool {
-	if netx.Contains(boot, ip) {
-		return true
+// mostSpecific walks from the full name towards the root. The first hit is the longest rule;
+// at the full name an exact rule beats a suffix rule.
+func (c *Compiled) mostSpecific(host string) *snapshot.Domain {
+	if host == "" {
+		return nil
 	}
-	if netx.Contains(deny, ip) {
-		return false
+	if d := c.fqdn[host]; d != nil {
+		return d
 	}
-	if len(allow) == 0 {
-		return true
+	for h := host; ; {
+		if d := c.suffix[h]; d != nil {
+			return d
+		}
+		i := strings.IndexByte(h, '.')
+		if i < 0 {
+			return nil
+		}
+		h = h[i+1:]
 	}
-	return netx.Contains(allow, ip)
 }
 
-func mostSpecific(domains []snapshot.Domain, host string) *snapshot.Domain {
-	var best *snapshot.Domain
-	for i := range domains {
-		d := &domains[i]
-		if !snapshot.Match(host, d.Name, d.Match) {
-			continue
-		}
-		if best == nil || len(d.Name) > len(best.Name) || (len(d.Name) == len(best.Name) && d.Match == snapshot.MatchFQDN && best.Match != snapshot.MatchFQDN) {
-			best = d
-		}
-	}
-	return best
-}
-
-func choose(dom *snapshot.Domain, client net.IP, qname string, pick *Picker) []snapshot.Proxy {
+func choose(dom *snapshot.Domain, client netip.Addr, qname string, pick *Picker) []snapshot.Proxy {
 	live := dom.Proxies
 	if len(live) == 0 {
 		return nil
@@ -118,16 +139,8 @@ func choose(dom *snapshot.Domain, client net.IP, qname string, pick *Picker) []s
 		return []snapshot.Proxy{live[idx]}
 	case snapshot.BalanceWeighted:
 		idx = weightedIndex(dom.Name, live, pick)
-	case snapshot.BalanceRoundRobin:
-		idx = 0
-		if pick != nil {
-			idx = pick.next(dom.Name) % len(live)
-		}
 	default:
-		idx = 0
-		if pick != nil {
-			idx = pick.next(dom.Name) % len(live)
-		}
+		idx = pick.next(dom.Name) % len(live)
 	}
 	out := []snapshot.Proxy{live[idx]}
 	if len(live) > 1 {
@@ -136,12 +149,15 @@ func choose(dom *snapshot.Domain, client net.IP, qname string, pick *Picker) []s
 	return out
 }
 
-func stickyIndex(client net.IP, qname string, n int) int {
+func stickyIndex(client netip.Addr, qname string, n int) int {
 	h := fnv.New32a()
-	if v4 := client.To4(); v4 != nil {
-		_, _ = h.Write(v4[:3])
-	} else if v6 := client.To16(); v6 != nil {
-		_, _ = h.Write(v6[:6])
+	client = client.Unmap()
+	if client.Is4() {
+		b := client.As4()
+		_, _ = h.Write(b[:3])
+	} else if client.Is6() {
+		b := client.As16()
+		_, _ = h.Write(b[:6])
 	}
 	_, _ = h.Write([]byte(strings.ToLower(qname)))
 	return int(h.Sum32() % uint32(n))
@@ -158,10 +174,7 @@ func weightedIndex(name string, live []snapshot.Proxy, pick *Picker) int {
 		weights[i] = w
 		sum += w
 	}
-	n := 0
-	if pick != nil {
-		n = pick.next(name+"#w") % sum
-	}
+	n := pick.next(name+"#w") % sum
 	acc := 0
 	for i, w := range weights {
 		acc += w
@@ -173,16 +186,14 @@ func weightedIndex(name string, live []snapshot.Proxy, pick *Picker) int {
 }
 
 func ipsFor(proxies []snapshot.Proxy, qtype uint16) []net.IP {
-	wantA := qtype == mdns.TypeA || qtype == mdns.TypeANY
-	wantAAAA := qtype == mdns.TypeAAAA || qtype == mdns.TypeANY
 	var out []net.IP
 	for _, p := range proxies {
-		if wantA && p.IPv4 != "" {
+		if qtype == mdns.TypeA && p.IPv4 != "" {
 			if ip := net.ParseIP(p.IPv4); ip != nil && ip.To4() != nil {
 				out = append(out, ip.To4())
 			}
 		}
-		if wantAAAA && p.IPv6 != "" {
+		if qtype == mdns.TypeAAAA && p.IPv6 != "" {
 			if ip := net.ParseIP(p.IPv6); ip != nil && ip.To4() == nil {
 				out = append(out, ip)
 			}

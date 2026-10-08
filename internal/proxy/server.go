@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +19,8 @@ import (
 	"dnsmarty/internal/snapshot"
 )
 
+const defaultMaxConns = 4096
+
 type Report struct {
 	At        time.Time
 	ClientIP  string
@@ -27,39 +31,78 @@ type Report struct {
 	DialError string
 }
 
+// compiled is a snapshot with its client lists parsed once.
+type compiled struct {
+	snap *snapshot.ProxySnap
+	acl  *snapshot.ACL
+}
+
 type Server struct {
-	snap    atomic.Pointer[snapshot.ProxySnap]
+	snap    atomic.Pointer[compiled]
 	reports chan Report
 	log     *slog.Logger
 	http    string
 	https   string
-	mu      sync.Mutex
-	active  map[string]int
+
+	maxConns atomic.Int64
+	conns    atomic.Int64
+
+	mu     sync.Mutex
+	active map[string]int
+
+	// aclSeen throttles reports of refused clients: a scan would otherwise fill the log.
+	aclMu   sync.Mutex
+	aclSeen map[string]time.Time
+
+	transport *http.Transport
 }
 
 func New(log *slog.Logger, httpAddr, httpsAddr string) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{
+	s := &Server{
 		reports: make(chan Report, 1024),
 		log:     log,
 		http:    httpAddr,
 		https:   httpsAddr,
 		active:  map[string]int{},
+		aclSeen: map[string]time.Time{},
 	}
+	s.maxConns.Store(defaultMaxConns)
+	s.transport = s.newTransport()
+	return s
 }
 
-func (s *Server) SetSnapshot(p *snapshot.ProxySnap) {
+// SetMaxConns caps client connections across both ports.
+func (s *Server) SetMaxConns(n int) {
+	if n < 1 {
+		n = 1
+	}
+	s.maxConns.Store(int64(n))
+}
+
+// SetSnapshot compiles and installs p. A snapshot that does not compile is rejected.
+func (s *Server) SetSnapshot(p *snapshot.ProxySnap) error {
 	if p == nil {
-		return
+		return errors.New("пустой снимок")
 	}
 	cp := *p
-	s.snap.Store(&cp)
-	metrics.ConfigVersion.Set(float64(p.Version))
+	acl, err := snapshot.CompileACL(cp.Allow, cp.Deny, cp.Bootstrap)
+	if err != nil {
+		return err
+	}
+	s.snap.Store(&compiled{snap: &cp, acl: acl})
+	metrics.ConfigVersion.Set(float64(cp.Version))
+	return nil
 }
 
-func (s *Server) Snapshot() *snapshot.ProxySnap { return s.snap.Load() }
+func (s *Server) Snapshot() *snapshot.ProxySnap {
+	if c := s.snap.Load(); c != nil {
+		return c.snap
+	}
+	return nil
+}
 
 func (s *Server) Reports() <-chan Report { return s.reports }
 
@@ -73,116 +116,164 @@ func (s *Server) Listen(ctx context.Context) error {
 		_ = lnHTTP.Close()
 		return err
 	}
-	errCh := make(chan error, 2)
-	go s.accept(ctx, lnHTTP, false, errCh)
-	go s.accept(ctx, lnTLS, true, errCh)
-	select {
-	case <-ctx.Done():
-		_ = lnHTTP.Close()
-		_ = lnTLS.Close()
-		return nil
-	case err := <-errCh:
-		_ = lnHTTP.Close()
-		_ = lnTLS.Close()
-		return err
-	}
+	return s.Serve(ctx, lnHTTP, lnTLS)
 }
 
-func (s *Server) accept(ctx context.Context, ln net.Listener, https bool, errCh chan error) {
+// Serve runs both ports on ready listeners until ctx ends.
+func (s *Server) Serve(ctx context.Context, lnHTTP, lnTLS net.Listener) error {
+	web := s.httpServer()
+	errCh := make(chan error, 2)
+	go func() { errCh <- s.acceptTLS(ctx, s.gate(lnTLS)) }()
+	go func() {
+		err := web.Serve(s.gate(lnHTTP))
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		errCh <- err
+	}()
+	var result error
+	select {
+	case <-ctx.Done():
+	case result = <-errCh:
+	}
+	_ = lnTLS.Close()
+	shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = web.Shutdown(shut)
+	s.transport.CloseIdleConnections()
+	return result
+}
+
+func (s *Server) acceptTLS(ctx context.Context, ln net.Listener) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			if ctx.Err() != nil {
-				return
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return nil
 			}
-			errCh <- err
-			return
+			return err
 		}
-		go s.handle(conn, https)
+		go s.handleTLS(conn.(*gatedConn))
 	}
 }
 
-func (s *Server) handle(conn net.Conn, https bool) {
-	defer conn.Close()
-	clientIP := ""
-	if ip := remoteIP(conn.RemoteAddr()); ip != nil {
-		clientIP = ip.String()
+// gate wraps a listener so every accepted connection has passed the global cap,
+// the client lists and the per-client session limit.
+func (s *Server) gate(ln net.Listener) net.Listener { return &gateListener{Listener: ln, s: s} }
+
+type gateListener struct {
+	net.Listener
+	s *Server
+}
+
+func (l *gateListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if g := l.s.admit(conn); g != nil {
+			return g, nil
+		}
 	}
-	snap := s.snap.Load()
-	if snap == nil {
-		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, Status: "refused", DialError: "no snapshot"})
-		return
+}
+
+// gatedConn releases its slots on Close, once.
+type gatedConn struct {
+	net.Conn
+	client netip.Addr
+	key    string
+	snap   *compiled
+	once   sync.Once
+	s      *Server
+}
+
+func (c *gatedConn) Close() error {
+	c.once.Do(func() {
+		c.s.release(c.key)
+		c.s.conns.Add(-1)
+	})
+	return c.Conn.Close()
+}
+
+// admit returns nil and closes conn when it must not be served.
+func (s *Server) admit(conn net.Conn) *gatedConn {
+	client := addrOf(conn.RemoteAddr())
+	if s.conns.Add(1) > s.maxConns.Load() {
+		s.conns.Add(-1)
+		_ = conn.Close()
+		metrics.ProxySessions.WithLabelValues("overload").Inc()
+		return nil
 	}
-	limit := snap.SessionLimit
+	c := s.snap.Load()
+	if c == nil {
+		s.conns.Add(-1)
+		_ = conn.Close()
+		s.emit(Report{At: time.Now().UTC(), ClientIP: client.String(), Status: "refused", DialError: "no snapshot"})
+		return nil
+	}
+	if !c.acl.Allowed(client) {
+		s.conns.Add(-1)
+		_ = conn.Close()
+		s.refuseACL(client)
+		return nil
+	}
+	key := clientKey(client)
+	limit := c.snap.SessionLimit
 	if limit < 1 {
 		limit = 1
 	}
-	if !s.acquire(clientIP, limit) {
-		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, Status: "limited"})
-		return
+	if !s.acquire(key, limit) {
+		s.conns.Add(-1)
+		_ = conn.Close()
+		s.emit(Report{At: time.Now().UTC(), ClientIP: client.String(), Status: "limited"})
+		return nil
 	}
-	defer s.release(clientIP)
+	return &gatedConn{Conn: conn, client: client, key: key, snap: c, s: s}
+}
 
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	var name string
-	var prefix []byte
-	var err error
-	if https {
-		name, prefix, err = ReadClientHello(conn)
-	} else {
-		name, prefix, err = ReadHTTPHost(conn)
+func (s *Server) refuseACL(client netip.Addr) {
+	metrics.ProxySessions.WithLabelValues("acl").Inc()
+	ip := client.String()
+	now := time.Now()
+	s.aclMu.Lock()
+	last, seen := s.aclSeen[ip]
+	if !seen || now.Sub(last) > time.Minute {
+		s.aclSeen[ip] = now
+		if len(s.aclSeen) > 10000 {
+			for k, t := range s.aclSeen {
+				if now.Sub(t) > time.Minute {
+					delete(s.aclSeen, k)
+				}
+			}
+		}
+		seen = false
 	}
+	s.aclMu.Unlock()
+	if !seen {
+		s.report(Report{At: now.UTC(), ClientIP: ip, Status: "acl"})
+	}
+}
+
+func (s *Server) handleTLS(conn *gatedConn) {
+	defer conn.Close()
+	clientIP := conn.client.String()
+	snap := conn.snap.snap
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	name, prefix, err := ReadClientHello(conn)
 	_ = conn.SetDeadline(time.Time{})
 	if err != nil || !nameAllowed(name, snap.Names) {
-		sni := name
 		msg := "not in snapshot"
 		if err != nil {
 			msg = err.Error()
-			if sni == "" {
-				sni = ""
-			}
 		}
-		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, SNI: clip(sni, 255), Status: "refused", DialError: clip(msg, 300)})
+		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, SNI: clip(name, 255), Status: "refused", DialError: clip(msg, 300)})
 		return
 	}
-
-	port := "80"
-	if https {
-		port = "443"
-	}
-	ips, rerr := resolveOrigin(snapshot.Normalize(name), snap.Upstreams)
-	own := ownIPs(snap)
-	dialTimeout := time.Duration(snap.DialTimeoutMs) * time.Millisecond
-	if dialTimeout <= 0 {
-		dialTimeout = 5 * time.Second
-	}
-	idle := time.Duration(snap.IdleTimeoutMs) * time.Millisecond
-	if idle <= 0 {
-		idle = 120 * time.Second
-	}
-	var last error = rerr
-	var up net.Conn
-	for _, ip := range ips {
-		if netx.IsBlocked(ip, own) {
-			last = errors.New("blocked address")
-			continue
-		}
-		d := net.Dialer{Timeout: dialTimeout}
-		c, derr := d.Dial("tcp", net.JoinHostPort(ip.String(), port))
-		if derr != nil {
-			last = derr
-			continue
-		}
-		up = c
-		break
-	}
-	if up == nil {
-		msg := "no address"
-		if last != nil {
-			msg = last.Error()
-		}
-		s.log.Warn("dial", "sni", name, "client", clientIP, "err", msg)
-		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, SNI: clip(name, 255), Status: "dial_error", DialError: clip(msg, 300)})
+	up, err := s.dialOrigin(context.Background(), snap, snapshot.Normalize(name), "443")
+	if err != nil {
+		s.log.Warn("dial", "sni", name, "client", clientIP, "err", err)
+		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, SNI: clip(name, 255), Status: "dial_error", DialError: clip(err.Error(), 300)})
 		return
 	}
 	defer up.Close()
@@ -190,37 +281,89 @@ func (s *Server) handle(conn net.Conn, https bool) {
 		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, SNI: clip(name, 255), Status: "dial_error", DialError: clip(err.Error(), 300)})
 		return
 	}
-	upN, downN := splice(conn, up, idle)
+	upN, downN := splice(conn.Conn, up, idleTimeout(snap))
 	metrics.ProxyBytes.WithLabelValues("up").Add(float64(upN))
 	metrics.ProxyBytes.WithLabelValues("down").Add(float64(downN))
 	s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, SNI: clip(name, 255), BytesUp: upN, BytesDown: downN, Status: "ok"})
 }
 
+// dialOrigin resolves name through the snapshot upstreams and dials the first address
+// that is not a special-purpose range or the node itself.
+func (s *Server) dialOrigin(ctx context.Context, snap *snapshot.ProxySnap, name, port string) (net.Conn, error) {
+	ips, err := resolveOrigin(name, snap.Upstreams)
+	if err != nil {
+		return nil, err
+	}
+	own := ownIPs(snap)
+	dialTimeout := time.Duration(snap.DialTimeoutMs) * time.Millisecond
+	if dialTimeout <= 0 {
+		dialTimeout = 5 * time.Second
+	}
+	last := errors.New("no address")
+	for _, ip := range ips {
+		if netx.IsBlocked(ip, own) {
+			last = errors.New("blocked address")
+			continue
+		}
+		d := net.Dialer{Timeout: dialTimeout}
+		c, derr := d.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+		if derr != nil {
+			last = derr
+			continue
+		}
+		return c, nil
+	}
+	return nil, last
+}
+
+func idleTimeout(snap *snapshot.ProxySnap) time.Duration {
+	idle := time.Duration(snap.IdleTimeoutMs) * time.Millisecond
+	if idle <= 0 {
+		idle = 120 * time.Second
+	}
+	return idle
+}
+
 func (s *Server) emit(r Report) {
 	metrics.ProxySessions.WithLabelValues(r.Status).Inc()
+	s.report(r)
+}
+
+func (s *Server) report(r Report) {
 	select {
 	case s.reports <- r:
 	default:
 	}
 }
 
-func (s *Server) acquire(ip string, limit int) bool {
+func (s *Server) acquire(key string, limit int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.active[ip] >= limit {
+	if s.active[key] >= limit {
 		return false
 	}
-	s.active[ip]++
+	s.active[key]++
 	return true
 }
 
-func (s *Server) release(ip string) {
+func (s *Server) release(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.active[ip]--
-	if s.active[ip] <= 0 {
-		delete(s.active, ip)
+	s.active[key]--
+	if s.active[key] <= 0 {
+		delete(s.active, key)
 	}
+}
+
+// clientKey groups IPv6 clients by /64: one host usually owns the whole /64.
+func clientKey(a netip.Addr) string {
+	if a.Is6() {
+		p, err := a.Prefix(64)
+		if err == nil {
+			return p.String()
+		}
+	}
+	return a.String()
 }
 
 func nameAllowed(host string, rules []snapshot.NameRule) bool {
@@ -282,8 +425,9 @@ func lookup(name string, qtype uint16, upstreams []string) ([]net.IP, string, er
 			last = err
 			continue
 		}
-		if resp == nil {
-			last = errors.New("empty")
+		if resp == nil || resp.Rcode != mdns.RcodeSuccess && resp.Rcode != mdns.RcodeNameError {
+			// SERVFAIL or REFUSED from one upstream: ask the next one.
+			last = errors.New("upstream failed")
 			continue
 		}
 		var ips []net.IP
@@ -306,36 +450,60 @@ func lookup(name string, qtype uint16, upstreams []string) ([]net.IP, string, er
 	return nil, "", last
 }
 
-type idleConn struct {
-	net.Conn
-	idle time.Duration
-}
-
-func (c idleConn) Read(p []byte) (int, error) {
-	_ = c.Conn.SetReadDeadline(time.Now().Add(c.idle))
-	return c.Conn.Read(p)
-}
-
-func (c idleConn) Write(p []byte) (int, error) {
-	_ = c.Conn.SetWriteDeadline(time.Now().Add(c.idle))
-	return c.Conn.Write(p)
-}
-
+// splice copies both ways until either side closes or nothing moves in either direction for idle.
+// A single activity clock keeps a long one-way download alive while the client stays silent.
 func splice(client, origin net.Conn, idle time.Duration) (up, down int64) {
-	var upN, downN atomic.Int64
+	var last atomic.Int64
+	last.Store(time.Now().UnixNano())
+	done := make(chan struct{})
+	go func() {
+		tick := idle / 4
+		if tick < 50*time.Millisecond {
+			tick = 50 * time.Millisecond
+		}
+		t := time.NewTicker(tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case now := <-t.C:
+				if now.UnixNano()-last.Load() > int64(idle) {
+					_ = client.Close()
+					_ = origin.Close()
+					return
+				}
+			}
+		}
+	}()
+	var upN atomic.Int64
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		n, _ := io.Copy(idleConn{Conn: origin, idle: idle}, idleConn{Conn: client, idle: idle})
+		n, _ := io.Copy(origin, activity{client, &last})
 		upN.Store(n)
 		closeWrite(origin)
 	}()
-	n, _ := io.Copy(idleConn{Conn: client, idle: idle}, idleConn{Conn: origin, idle: idle})
-	downN.Store(n)
+	downN, _ := io.Copy(client, activity{origin, &last})
 	closeWrite(client)
 	wg.Wait()
-	return upN.Load(), downN.Load()
+	close(done)
+	return upN.Load(), downN
+}
+
+// activity stamps the shared clock on every read.
+type activity struct {
+	r    io.Reader
+	last *atomic.Int64
+}
+
+func (a activity) Read(p []byte) (int, error) {
+	n, err := a.r.Read(p)
+	if n > 0 {
+		a.last.Store(time.Now().UnixNano())
+	}
+	return n, err
 }
 
 func closeWrite(c net.Conn) {
@@ -345,12 +513,19 @@ func closeWrite(c net.Conn) {
 	}
 }
 
-func remoteIP(a net.Addr) net.IP {
-	host, _, err := net.SplitHostPort(a.String())
-	if err != nil {
-		return net.ParseIP(a.String())
+func addrOf(a net.Addr) netip.Addr {
+	if t, ok := a.(*net.TCPAddr); ok {
+		ip, _ := netip.AddrFromSlice(t.IP)
+		return ip.Unmap()
 	}
-	return net.ParseIP(host)
+	if a == nil {
+		return netip.Addr{}
+	}
+	ap, err := netip.ParseAddrPort(a.String())
+	if err != nil {
+		return netip.Addr{}
+	}
+	return ap.Addr().Unmap()
 }
 
 func clip(s string, n int) string {

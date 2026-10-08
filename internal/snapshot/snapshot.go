@@ -16,15 +16,17 @@ const (
 
 type DNS struct {
 	// Epoch changes when the panel database starts over, so versions restart without being rejected as old.
-	Epoch           string   `json:"epoch"`
-	Version         int64    `json:"version"`
-	TTL             uint32   `json:"ttl"`
-	PullIntervalSec int      `json:"pull_interval_sec"`
-	Bootstrap       []string `json:"bootstrap"`
-	Allow           []string `json:"allow"`
-	Deny            []string `json:"deny"`
-	Upstreams       []string `json:"upstreams"`
-	Domains         []Domain `json:"domains"`
+	Epoch           string `json:"epoch"`
+	Version         int64  `json:"version"`
+	TTL             uint32 `json:"ttl"`
+	PullIntervalSec int    `json:"pull_interval_sec"`
+	// RateQPS limits UDP answers per client network per second; 0 is no limit.
+	RateQPS   int      `json:"rate_qps"`
+	Bootstrap []string `json:"bootstrap"`
+	Allow     []string `json:"allow"`
+	Deny      []string `json:"deny"`
+	Upstreams []string `json:"upstreams"`
+	Domains   []Domain `json:"domains"`
 }
 
 type Domain struct {
@@ -52,6 +54,10 @@ type ProxySnap struct {
 	DialTimeoutMs   int        `json:"dial_timeout_ms"`
 	IdleTimeoutMs   int        `json:"idle_timeout_ms"`
 	Upstreams       []string   `json:"upstreams"`
+	// The proxy applies the same client lists as DNS.
+	Allow     []string `json:"allow"`
+	Deny      []string `json:"deny"`
+	Bootstrap []string `json:"bootstrap"`
 }
 
 type NameRule struct {
@@ -88,5 +94,14 @@ func EmptySlicesProxy(s *ProxySnap) {
 	}
 	if s.Upstreams == nil {
 		s.Upstreams = []string{}
+	}
+	if s.Allow == nil {
+		s.Allow = []string{}
+	}
+	if s.Deny == nil {
+		s.Deny = []string{}
+	}
+	if s.Bootstrap == nil {
+		s.Bootstrap = []string{}
 	}
 }

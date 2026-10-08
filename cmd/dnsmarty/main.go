@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -143,8 +144,10 @@ func dnsCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
-			metrics.Serve(ctx, envDefault("METRICS_ADDR", ":9101"), slog.Default())
+			// Metrics stay on loopback by default: DNS nodes run in the host network.
+			metrics.Serve(ctx, envDefault("METRICS_ADDR", "127.0.0.1:9101"), slog.Default())
 			eng := dns.NewEngine(slog.Default())
+			eng.SetForwardLimit(envInt("DNS_FORWARD_MAX", 512))
 			stats := &agent.Stats{}
 			go agent.Collect(ctx, stats, eng.Hits(), nil)
 			errCh := make(chan error, 2)
@@ -184,8 +187,9 @@ func proxyCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
-			metrics.Serve(ctx, envDefault("METRICS_ADDR", ":9102"), slog.Default())
+			metrics.Serve(ctx, envDefault("METRICS_ADDR", "127.0.0.1:9102"), slog.Default())
 			srv := proxy.New(slog.Default(), envDefault("PROXY_HTTP_ADDR", ":80"), envDefault("PROXY_HTTPS_ADDR", ":443"))
+			srv.SetMaxConns(envInt("PROXY_MAX_CONNS", 4096))
 			stats := &agent.Stats{}
 			go agent.Collect(ctx, stats, nil, srv.Reports())
 			errCh := make(chan error, 2)
@@ -228,6 +232,14 @@ func envDefault(key, def string) string {
 		return def
 	}
 	return v
+}
+
+func envInt(key string, def int) int {
+	n, err := strconv.Atoi(envDefault(key, ""))
+	if err != nil || n < 1 {
+		return def
+	}
+	return n
 }
 
 func partitionLoop(ctx context.Context, st *store.Store) {
