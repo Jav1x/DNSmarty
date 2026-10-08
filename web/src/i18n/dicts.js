@@ -1,6 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
-
-const dict = {
+export const dict = {
   en: {
     account: "Account",
     changePassword: "Change password",
@@ -37,12 +35,8 @@ const dict = {
     sessions60: "Sessions, 60 s",
     bytes24: "Bytes, 24 h",
     acl60: "ACL refusals, 60 s",
-    patch: "Patch bay",
     domain: "Domain",
     noDomains: "No domains.",
-    legendLive: "in the snapshot",
-    legendDead: "assigned, no contact for 30 s",
-    legendEmpty: "not wired",
     nodeCol: "Nodes",
     name: "Name",
     role: "Role",
@@ -87,6 +81,9 @@ const dict = {
     delete: "Delete",
     confirmDelete: "Delete {name}? This cannot be undone.",
     confirmRotate: "Issue a new key for {name}? The agent loses the connection until it is reinstalled with the new key.",
+    confirmTitle: "Please confirm",
+    confirmYes: "Yes, do it",
+    cancel: "Cancel",
     newDomain: "New domain",
     groups: "Groups",
     allGroups: "All domains",
@@ -146,6 +143,13 @@ const dict = {
     action: "Action",
     detail: "Detail",
     ipPlaceholder: "198.51.100.10 or a CIDR",
+    theme: "Theme",
+    themeSystem: "System",
+    themeLight: "Light",
+    themeDark: "Dark",
+    menu: "Menu",
+    needsUpdate: "agent is outdated",
+    skipToContent: "Skip to content",
   },
   ru: {
     account: "Аккаунт",
@@ -183,12 +187,8 @@ const dict = {
     sessions60: "Сессии, 60 с",
     bytes24: "Байты, 24 ч",
     acl60: "Отказы ACL, 60 с",
-    patch: "Коммутация",
     domain: "Домен",
     noDomains: "Нет доменов.",
-    legendLive: "в снимке",
-    legendDead: "назначен, нет связи 30 с",
-    legendEmpty: "не подключён",
     nodeCol: "Узлы",
     name: "Имя",
     role: "Роль",
@@ -233,6 +233,9 @@ const dict = {
     delete: "Удалить",
     confirmDelete: "Удалить {name}? Отменить нельзя.",
     confirmRotate: "Выпустить новый ключ для {name}? Агент потеряет связь, пока его не переустановят с новым ключом.",
+    confirmTitle: "Подтвердите",
+    confirmYes: "Да, сделать",
+    cancel: "Отмена",
     newDomain: "Новый домен",
     groups: "Группы",
     allGroups: "Все домены",
@@ -292,138 +295,83 @@ const dict = {
     action: "Действие",
     detail: "Детали",
     ipPlaceholder: "198.51.100.10 или CIDR",
+    theme: "Тема",
+    themeSystem: "Системная",
+    themeLight: "Светлая",
+    themeDark: "Тёмная",
+    menu: "Меню",
+    needsUpdate: "агент устарел",
+    skipToContent: "К содержимому",
   },
 };
 
-const fields = {
-  en: {
-    "имя узла": "node name",
-    "роль": "role",
-    "регион": "region",
-    "адрес агента": "agent address",
-    "порт агента": "agent port",
-    "ключ": "key",
-    "вес только у прокси": "weight is only for a proxy",
-    "подпись": "label",
-    "имя домена": "domain name",
-    "тип совпадения": "match type",
-    "стратегия": "strategy",
-    "комментарий": "comment",
-    "вес": "weight",
-    "upstream должен быть IP": "upstream must be an IP",
-    "порт upstream": "upstream port",
-    "TTL 1–300": "TTL 1–300",
-    "интервал pull 2–15 с": "push interval 2–15 s",
-    "retention 1–30": "retention 1–30",
-    "лимит сессий": "session limit",
-    "таймаут dial": "dial timeout",
-    "таймаут idle": "idle timeout",
-    "образ агента": "agent image",
-    "лимит DNS": "DNS rate limit",
-    "хранение аудита": "audit retention",
-    "группа": "group",
-    "список": "list",
-  },
-  ru: {},
+export const fields = {
+    en: {
+        "имя узла": "node name",
+        "роль": "role",
+        "регион": "region",
+        "адрес агента": "agent address",
+        "порт агента": "agent port",
+        "ключ": "key",
+        "вес только у прокси": "weight is only for a proxy",
+        "подпись": "label",
+        "имя домена": "domain name",
+        "тип совпадения": "match type",
+        "стратегия": "strategy",
+        "комментарий": "comment",
+        "вес": "weight",
+        "upstream должен быть IP": "upstream must be an IP",
+        "порт upstream": "upstream port",
+        "TTL 1–300": "TTL 1–300",
+        "интервал pull 2–15 с": "push interval 2–15 s",
+        "retention 1–30": "retention 1–30",
+        "лимит сессий": "session limit",
+        "таймаут dial": "dial timeout",
+        "таймаут idle": "idle timeout",
+        "образ агента": "agent image",
+        "лимит DNS": "DNS rate limit",
+        "хранение аудита": "audit retention",
+        "группа": "group",
+        "список": "list",
+    },
+    ru: {},
 };
 
-const phrases = {
-  en: {
-    "Такая запись уже есть.": "That record already exists.",
-    "Запись не найдена.": "Record not found.",
-    "Не удалось сохранить.": "Could not save.",
-    "некорректный JSON": "Invalid JSON.",
-    "Панель не смогла проверить пароль.": "The panel could not check the password.",
-    "Неверный логин или пароль.": "Wrong username or password.",
-    "Сессия не создана.": "Session was not created.",
-    "нужен вход": "Sign in required.",
-    "Сводка не собралась.": "The overview could not be loaded.",
-    "Список узлов не прочитан.": "The node list could not be read.",
-    "Список доменов не прочитан.": "The domain list could not be read.",
-    "Список сетей не прочитан.": "The network list could not be read.",
-    "Настройки не прочитаны.": "Settings could not be read.",
-    "Upstream не прочитан.": "Upstreams could not be read.",
-    "Журнал аудита не прочитан.": "The audit log could not be read.",
-    "Проверьте поле: IP": "Check the field: IP",
-    "ключ не совпал": "The key does not match.",
-    "Слишком много попыток. Попробуйте позже.": "Too many attempts. Try again later.",
-    "Текущий пароль неверен.": "The current password is wrong.",
-    "Новый пароль: от 12 до 72 байт и не равен текущему.": "New password: 12 to 72 bytes, different from the current one.",
-    "Запрос отклонён: обновите страницу.": "Request rejected: reload the page.",
-    "Нужен Content-Type: application/json.": "Content-Type must be application/json.",
-    "Внутренняя ошибка панели.": "Internal panel error.",
-  },
-  ru: {
-    "That record already exists.": "Такая запись уже есть.",
-    "Record not found.": "Запись не найдена.",
-    "Could not save.": "Не удалось сохранить.",
-    "Invalid JSON.": "Некорректный JSON.",
-    "The panel could not check the password.": "Панель не смогла проверить пароль.",
-    "Wrong username or password.": "Неверный логин или пароль.",
-    "Session was not created.": "Сессия не создана.",
-    "Sign in required.": "Нужен вход.",
-    "The key does not match.": "Ключ не совпал.",
-  },
+export const phrases = {
+    en: {
+        "Такая запись уже есть.": "That record already exists.",
+        "Запись не найдена.": "Record not found.",
+        "Не удалось сохранить.": "Could not save.",
+        "некорректный JSON": "Invalid JSON.",
+        "Панель не смогла проверить пароль.": "The panel could not check the password.",
+        "Неверный логин или пароль.": "Wrong username or password.",
+        "Сессия не создана.": "Session was not created.",
+        "нужен вход": "Sign in required.",
+        "Сводка не собралась.": "The overview could not be loaded.",
+        "Список узлов не прочитан.": "The node list could not be read.",
+        "Список доменов не прочитан.": "The domain list could not be read.",
+        "Список сетей не прочитан.": "The network list could not be read.",
+        "Настройки не прочитаны.": "Settings could not be read.",
+        "Upstream не прочитан.": "Upstreams could not be read.",
+        "Журнал аудита не прочитан.": "The audit log could not be read.",
+        "Проверьте поле: IP": "Check the field: IP",
+        "ключ не совпал": "The key does not match.",
+        "Слишком много попыток. Попробуйте позже.": "Too many attempts. Try again later.",
+        "Текущий пароль неверен.": "The current password is wrong.",
+        "Новый пароль: от 12 до 72 байт и не равен текущему.": "New password: 12 to 72 bytes, different from the current one.",
+        "Запрос отклонён: обновите страницу.": "Request rejected: reload the page.",
+        "Нужен Content-Type: application/json.": "Content-Type must be application/json.",
+        "Внутренняя ошибка панели.": "Internal panel error.",
+    },
+    ru: {
+        "That record already exists.": "Такая запись уже есть.",
+        "Record not found.": "Запись не найдена.",
+        "Could not save.": "Не удалось сохранить.",
+        "Invalid JSON.": "Некорректный JSON.",
+        "The panel could not check the password.": "Панель не смогла проверить пароль.",
+        "Wrong username or password.": "Неверный логин или пароль.",
+        "Session was not created.": "Сессия не создана.",
+        "Sign in required.": "Нужен вход.",
+        "The key does not match.": "Ключ не совпал.",
+    },
 };
-
-const I18n = createContext(null);
-
-function initialLang() {
-  const saved = localStorage.getItem("dnsmarty-lang");
-  if (saved === "en" || saved === "ru") return saved;
-  return navigator.language?.toLowerCase().startsWith("ru") ? "ru" : "en";
-}
-
-export function I18nProvider({ children }) {
-  const [lang, setLangState] = useState(initialLang);
-  useEffect(() => {
-    document.documentElement.lang = lang;
-  }, [lang]);
-  function setLang(next) {
-    localStorage.setItem("dnsmarty-lang", next);
-    setLangState(next);
-  }
-  function t(key, vars) {
-    let text = dict[lang][key] ?? dict.en[key] ?? key;
-    if (vars) {
-      for (const [name, value] of Object.entries(vars)) {
-        text = text.replaceAll(`{${name}}`, value);
-      }
-    }
-    return text;
-  }
-  function err(message) {
-    if (!message) return "";
-    const exact = phrases[lang][message];
-    if (exact) return exact;
-    const reach = message.match(/^(?:нет связи с|Cannot reach) (.+)$/);
-    if (reach) return lang === "ru" ? `Нет связи с ${reach[1]}` : `Cannot reach ${reach[1]}`;
-    const field = message.match(/^(?:Проверьте поле|Check the field): (.+)$/);
-    if (field) {
-      const name = fields[lang][field[1]] || field[1];
-      return lang === "ru" ? `Проверьте поле: ${name}` : `Check the field: ${name}`;
-    }
-    const boot = message.match(/^Проверьте поле: bootstrap (.+)$/);
-    if (boot) return lang === "ru" ? message : `Check the field: bootstrap ${boot[1]}`;
-    const agent = message.match(/^агент ответил (.+)$/);
-    if (agent) return lang === "ru" ? message : `Agent replied ${agent[1]}`;
-    const cfg = message.match(/^конфиг не принят: (.+)$/);
-    if (cfg) return lang === "ru" ? message : `Config was rejected: ${cfg[1]}`;
-    return message;
-  }
-  return <I18n.Provider value={{ lang, setLang, t, err }}>{children}</I18n.Provider>;
-}
-
-export function useI18n() {
-  return useContext(I18n);
-}
-
-export function LangSwitch() {
-  const { lang, setLang } = useI18n();
-  return (
-    <span className="lang">
-      <button type="button" className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
-      <button type="button" className={lang === "ru" ? "on" : ""} onClick={() => setLang("ru")}>RU</button>
-    </span>
-  );
-}
