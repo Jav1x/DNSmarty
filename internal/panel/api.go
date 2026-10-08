@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -601,6 +602,69 @@ func (s *Server) overviewSeries(w http.ResponseWriter, r *http.Request) {
 		"step_sec": int(step.Seconds()),
 		"points":   points,
 	})
+}
+
+// statsWindow parses the window parameter shared by the stats endpoints: a duration or
+// "all" (0, everything within retention). Unknown values fall back to 24h.
+func statsWindow(raw string) int64 {
+	switch strings.TrimSpace(raw) {
+	case "1h":
+		return int64(time.Hour.Seconds())
+	case "6h":
+		return int64(6 * time.Hour.Seconds())
+	case "all":
+		return 0
+	default:
+		return int64(24 * time.Hour.Seconds())
+	}
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	window := statsWindow(r.URL.Query().Get("window"))
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= 200 {
+			limit = n
+		}
+	}
+	domains, err := s.store.TopDomains(r.Context(), window, limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	clients, err := s.store.TopClients(r.Context(), window, limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	proxy, err := s.store.TopProxyDomains(r.Context(), window, limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"window":  r.URL.Query().Get("window"),
+		"domains": domains,
+		"clients": clients,
+		"proxy":   proxy,
+	})
+}
+
+// statsClient lists the domains one client asked for. Only a single address is accepted:
+// a subnet would mix several clients into one list.
+func (s *Server) statsClient(w http.ResponseWriter, r *http.Request) {
+	ip, err := netip.ParseAddr(strings.TrimSpace(r.URL.Query().Get("ip")))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid", "Check the field: IP")
+		return
+	}
+	window := statsWindow(r.URL.Query().Get("window"))
+	rows, err := s.store.ClientDomains(r.Context(), ip.String(), window)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
 }
 
 // setCookie writes the session cookie. Secure comes from configuration, never from a request header

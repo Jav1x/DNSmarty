@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   Activity, Globe2, FolderTree, ShieldCheck, ScrollText, Settings2,
-  History, UserRound, LogOut, Menu, Monitor, Sun, Moon,
+  History, UserRound, LogOut, Menu, Monitor, Sun, Moon, BarChart3,
 } from "lucide-react";
 import { api } from "../api";
 import { LangSwitch, useI18n } from "../i18n";
@@ -14,6 +14,7 @@ const nav = [
   ["/domains", "domains", FolderTree],
   ["/clients", "clients", ShieldCheck],
   ["/logs", "logs", ScrollText],
+  ["/stats", "stats", BarChart3],
   ["/settings", "settings", Settings2],
   ["/audit", "audit", History],
   ["/account", "account", UserRound],

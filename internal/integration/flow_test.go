@@ -239,6 +239,48 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatalf("last bucket dns=%d", last.DNS)
 	}
 
+	// Stats: the bulk insert (one client, decision forward) dominates the aggregates.
+	// A second client with an ACL refusal checks the ACL filter and the distinct-client count.
+	if _, err := pool.Exec(ctx, `INSERT INTO dns_hit (day, at, node_id, client_ip, qname, qtype, rcode, decision)
+		VALUES (current_date, now(), $1, '192.0.2.7', 'bulk.test.', 'A', 'NOERROR', 'acl')`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO proxy_session (day, at, node_id, client_ip, sni, bytes_up, bytes_down, status)
+		VALUES (current_date, now(), $1, '192.0.2.7', 'site.example', 100, 200, 'ok'),
+		       (current_date, now(), $1, '192.0.2.7', 'site.example', 10, 20, 'acl')`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	topDomains, err := st.TopDomains(ctx, int64(time.Hour.Seconds()), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topDomains) == 0 || topDomains[0].Name != "bulk.test." || topDomains[0].Queries < 2001 {
+		t.Fatalf("top domains: %+v", topDomains[:1])
+	}
+	if topDomains[0].ACL != 1 || topDomains[0].Clients != 2 {
+		t.Fatalf("bulk.test. stat: %+v", topDomains[0])
+	}
+	topClients, err := st.TopClients(ctx, int64(time.Hour.Seconds()), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topClients) < 2 || topClients[0].IP != "198.51.100.1" || topClients[0].ACL != 0 {
+		t.Fatalf("top clients: %+v", topClients)
+	}
+	cd, err := st.ClientDomains(ctx, "192.0.2.7", int64(time.Hour.Seconds()))
+	if err != nil || len(cd) != 1 || cd[0].Name != "bulk.test." || cd[0].ACL != 1 {
+		t.Fatalf("client domains: %v %+v", err, cd)
+	}
+	topProxy, err := st.TopProxyDomains(ctx, int64(time.Hour.Seconds()), 10)
+	if err != nil || len(topProxy) != 1 || topProxy[0].Name != "site.example" || topProxy[0].Sessions != 2 || topProxy[0].Bytes != 330 {
+		t.Fatalf("top proxy: %v %+v", err, topProxy)
+	}
+	// A window of 0 means everything; with 1s nothing is older, so the counts match.
+	all, err := st.TopDomains(ctx, 0, 10)
+	if err != nil || len(all) != len(topDomains) {
+		t.Fatalf("all window: %v %d vs %d", err, len(all), len(topDomains))
+	}
+
 	// Keyset pagination: the first page ends with a cursor, the second continues past it.
 	page := store.Page{Limit: 5}
 	rows, cur, err := st.DNSLogs(ctx, "bulk", "", "", page)
@@ -274,6 +316,39 @@ func TestPostgresDecisions(t *testing.T) {
 	// State change without the CSRF header is refused.
 	if code := apiCall(t, ts.URL, http.MethodPost, "/api/groups", `{"name":"x"}`, "application/json", sess.cookie, ""); code != http.StatusForbidden {
 		t.Fatalf("без CSRF: %d", code)
+	}
+	// The stats endpoint returns all three aggregates; a bad ip is rejected.
+	req2, err := http.NewRequest(http.MethodGet, ts.URL+"/api/stats?window=1h", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req2.AddCookie(sess.cookie)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stats struct {
+		Domains []store.DomainStat  `json:"domains"`
+		Clients []store.ClientStat  `json:"clients"`
+		Proxy   []store.ProxyDomain `json:"proxy"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&stats); err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK || len(stats.Domains) == 0 || len(stats.Clients) == 0 || len(stats.Proxy) == 0 {
+		t.Fatalf("stats: %d %+v", resp2.StatusCode, stats)
+	}
+	badIP, err := http.Get(ts.URL + "/api/stats/client?ip=not-an-ip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	badIP.Body.Close()
+	if badIP.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad ip without session: %d", badIP.StatusCode)
+	}
+	if code := apiCall(t, ts.URL, http.MethodGet, "/api/stats/client?ip=not-an-ip", "", "", sess.cookie, ""); code != http.StatusBadRequest {
+		t.Fatalf("bad ip with session: %d", code)
 	}
 	// Form-encoded body is refused.
 	if code := apiCall(t, ts.URL, http.MethodPost, "/api/groups", `name=x`, "application/x-www-form-urlencoded", sess.cookie, sess.csrf); code != http.StatusUnsupportedMediaType {

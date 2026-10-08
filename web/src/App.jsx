@@ -10,6 +10,7 @@ import { Nodes } from "./pages/Nodes";
 import { Domains } from "./pages/Domains";
 import { Clients } from "./pages/Clients";
 import { Logs } from "./pages/Logs";
+import { Stats } from "./pages/Stats";
 import { Account } from "./pages/Account";
 import { Settings } from "./pages/Settings";
 import { Audit } from "./pages/Audit";
@@ -34,6 +35,7 @@ export function App() {
             <Route path="/domains" element={<Domains />} />
             <Route path="/clients" element={<Clients />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/stats" element={<Stats />} />
             <Route path="/account" element={<Account />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/audit" element={<Audit />} />

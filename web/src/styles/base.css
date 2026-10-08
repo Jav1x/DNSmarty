@@ -56,6 +56,9 @@ th, td {
 }
 th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
 .mono, td.mono { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+/* A row that opens a drill-down: pointer affordance without link semantics. */
+tr.click { cursor: pointer; }
+tr.click:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 
 .empty { color: var(--muted); }
 .banner {
