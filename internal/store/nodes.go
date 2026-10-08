@@ -29,11 +29,16 @@ type Node struct {
 	AgentPort     int        `json:"agent_port"`
 	LastError     string     `json:"last_error"`
 	AgentVersion  string     `json:"agent_version"`
+	// Fresh: enabled and heard from within the live window.
+	Fresh bool `json:"fresh"`
 }
 
-func (n Node) Fresh(now time.Time) bool {
-	return n.Enabled && n.LastSeen != nil && now.Sub(*n.LastSeen) < snapshot.LiveWindowSec*time.Second
-}
+// liveWindow is how long a node counts as alive after the last successful push:
+// three push intervals, at least 30 s. A couple of slow cycles must not drop proxies
+// out of DNS answers.
+const liveWindow = `make_interval(secs => (SELECT greatest(30, 3 * pull_interval_sec) FROM setting WHERE id = 1))`
+
+const nodeFresh = `(enabled AND last_seen_at IS NOT NULL AND last_seen_at > now() - ` + liveWindow + `)`
 
 type NodeInput struct {
 	Name      string `json:"name"`
@@ -51,7 +56,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 		SELECT id::text, role, name,
 		       coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
 		       region, enabled, config_version, last_seen_at,
-		       agent_host, agent_port, last_error, agent_version
+		       agent_host, agent_port, last_error, agent_version, `+nodeFresh+`
 		FROM node
 		ORDER BY role, name
 	`)
@@ -62,7 +67,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 	var out []Node
 	for rows.Next() {
 		var n Node
-		if err := rows.Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion); err != nil {
+		if err := rows.Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion, &n.Fresh); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -244,9 +249,9 @@ func (s *Store) GetNode(ctx context.Context, id string) (Node, error) {
 		SELECT id::text, role, name,
 		       coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
 		       region, enabled, config_version, last_seen_at,
-		       agent_host, agent_port, last_error, agent_version
+		       agent_host, agent_port, last_error, agent_version, `+nodeFresh+`
 		FROM node WHERE id = $1
-	`, id).Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion)
+	`, id).Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion, &n.Fresh)
 	if err != nil {
 		return Node{}, mapErr(err)
 	}

@@ -8,7 +8,6 @@ import (
 	"mime"
 	"net/http"
 	"strings"
-	"time"
 
 	"dnsmarty/internal/snapshot"
 	"dnsmarty/internal/store"
@@ -197,7 +196,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", "Сводка не собралась.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"overview": o, "nodes": nodeList(o.Nodes)})
+	writeJSON(w, http.StatusOK, map[string]any{"overview": o, "nodes": o.Nodes})
 }
 
 func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +205,7 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", "Список узлов не прочитан.")
 		return
 	}
-	writeJSON(w, http.StatusOK, nodeList(rows))
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) nodesCreate(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +220,7 @@ func (s *Server) nodesCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, _ := s.store.Settings(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"node": withFresh(node), "key": key, "image": st.AgentImage})
+	writeJSON(w, http.StatusOK, map[string]any{"node": node, "key": key, "image": st.AgentImage})
 }
 
 func (s *Server) nodesUpdate(w http.ResponseWriter, r *http.Request) {
@@ -510,28 +509,11 @@ func (s *Server) setCookie(w http.ResponseWriter, value string, maxAge int) {
 	})
 }
 
-type nodeView struct {
-	store.Node
-	Fresh bool `json:"fresh"`
-}
-
-func withFresh(n store.Node) nodeView {
-	return nodeView{Node: n, Fresh: n.Fresh(time.Now())}
-}
-
-func nodeList(rows []store.Node) []nodeView {
-	out := make([]nodeView, 0, len(rows))
-	for _, n := range rows {
-		out = append(out, withFresh(n))
-	}
-	return out
-}
-
-func proxyOnly(rows []store.Node) []nodeView {
-	out := []nodeView{}
+func proxyOnly(rows []store.Node) []store.Node {
+	out := []store.Node{}
 	for _, n := range rows {
 		if n.Role == snapshot.RoleProxy {
-			out = append(out, withFresh(n))
+			out = append(out, n)
 		}
 	}
 	return out

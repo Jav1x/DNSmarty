@@ -690,6 +690,7 @@ function Settings() {
             <div><label>{t("dialMs")}</label><input name="dial_timeout_ms" defaultValue={s.dial_timeout_ms} /></div>
             <div><label>{t("idleMs")}</label><input name="idle_timeout_ms" defaultValue={s.idle_timeout_ms} /></div>
             <div><label>{t("dnsRate")}</label><input name="dns_rate_qps" type="number" min="0" max="100000" defaultValue={s.dns_rate_qps} /></div>
+            <div><label>{t("auditRetention")}</label><input name="audit_retention_days" type="number" min="7" max="3650" defaultValue={s.audit_retention_days} /></div>
             <div><label>{t("agentImage")}</label><input name="agent_image" defaultValue={s.agent_image} /></div>
           </div>
           <p><button type="submit">{t("save")}</button></p>

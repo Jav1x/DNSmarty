@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"dnsmarty/internal/snapshot"
 )
@@ -82,82 +84,96 @@ type Overview struct {
 	Rows       []BayRow `json:"rows"`
 }
 
-func (s *Store) InsertHits(ctx context.Context, nodeID string, hits []DNSHit) error {
-	if len(hits) == 0 {
-		return nil
+// insertChunk bounds one COPY. The agent buffers up to 2000 rows per kind between pushes.
+const insertChunk = 1000
+
+// InsertHits stores DNS log rows with COPY. A row with a malformed address is skipped rather
+// than failing the batch: the agent has already handed the rows over and cannot resend them.
+func (s *Store) InsertHits(ctx context.Context, nodeID string, hits []DNSHit) (skipped int, err error) {
+	node, err := parseUUID(nodeID)
+	if err != nil {
+		return 0, err
 	}
-	if len(hits) > 500 {
-		return fmt.Errorf("%w: batch", ErrInvalid)
-	}
-	if err := s.MaintainPartitions(ctx); err != nil {
-		return err
-	}
-	batch := &pgx.Batch{}
+	now := time.Now().UTC()
+	rows := make([][]any, 0, len(hits))
 	for _, h := range hits {
-		if h.At.IsZero() {
-			h.At = time.Now().UTC()
+		ip, ok := ipOrNull(h.ClientIP)
+		if !ok {
+			skipped++
+			continue
 		}
-		at := h.At.UTC()
-		day := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
-		var ip any
-		if h.ClientIP != "" {
-			if net.ParseIP(h.ClientIP) == nil {
-				return fmt.Errorf("%w: client ip", ErrInvalid)
-			}
-			ip = h.ClientIP
-		}
-		batch.Queue(`
-			INSERT INTO dns_hit (day, at, node_id, client_ip, qname, qtype, rcode, decision)
-			VALUES ($1, $2, $3, $4::inet, $5, $6, $7, $8)
-		`, day, at, nodeID, ip, clip(h.QName, 255), clip(h.QType, 16), clip(h.Rcode, 32), clip(h.Decision, 16))
+		at := clampAt(h.At, now)
+		rows = append(rows, []any{dayOf(at), at, node, ip,
+			clip(h.QName, 255), clip(h.QType, 16), clip(h.Rcode, 32), clip(h.Decision, 16)})
 	}
-	br := s.pool.SendBatch(ctx, batch)
-	defer br.Close()
-	for range hits {
-		if _, err := br.Exec(); err != nil {
+	cols := []string{"day", "at", "node_id", "client_ip", "qname", "qtype", "rcode", "decision"}
+	return skipped, s.copyChunks(ctx, "dns_hit", cols, rows)
+}
+
+func (s *Store) InsertSessions(ctx context.Context, nodeID string, reports []ProxyReport) (skipped int, err error) {
+	node, err := parseUUID(nodeID)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC()
+	rows := make([][]any, 0, len(reports))
+	for _, r := range reports {
+		ip, ok := ipOrNull(r.ClientIP)
+		if !ok {
+			skipped++
+			continue
+		}
+		at := clampAt(r.At, now)
+		rows = append(rows, []any{dayOf(at), at, node, ip,
+			clip(r.SNI, 255), r.BytesUp, r.BytesDown, clip(r.Status, 32), clip(r.DialError, 300)})
+	}
+	cols := []string{"day", "at", "node_id", "client_ip", "sni", "bytes_up", "bytes_down", "status", "dial_error"}
+	return skipped, s.copyChunks(ctx, "proxy_session", cols, rows)
+}
+
+func (s *Store) copyChunks(ctx context.Context, table string, cols []string, rows [][]any) error {
+	for len(rows) > 0 {
+		n := min(len(rows), insertChunk)
+		if _, err := s.pool.CopyFrom(ctx, pgx.Identifier{table}, cols, pgx.CopyFromRows(rows[:n])); err != nil {
 			return err
 		}
+		rows = rows[n:]
 	}
 	return nil
 }
 
-func (s *Store) InsertSessions(ctx context.Context, nodeID string, rowsIn []ProxyReport) error {
-	if len(rowsIn) == 0 {
-		return nil
+// clampAt keeps a row inside the partitions that exist. An agent with a wrong clock
+// would otherwise write into a day with no partition and lose the whole batch.
+func clampAt(at, now time.Time) time.Time {
+	if at.IsZero() || at.Before(now.Add(-time.Hour)) || at.After(now.Add(5*time.Minute)) {
+		return now
 	}
-	if len(rowsIn) > 500 {
-		return fmt.Errorf("%w: batch", ErrInvalid)
+	return at.UTC()
+}
+
+func dayOf(t time.Time) time.Time {
+	y, m, d := t.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
+// ipOrNull returns nil for an empty address and false for one that does not parse.
+func ipOrNull(s string) (any, bool) {
+	if s == "" {
+		return nil, true
 	}
-	if err := s.MaintainPartitions(ctx); err != nil {
-		return err
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return nil, false
 	}
-	batch := &pgx.Batch{}
-	for _, h := range rowsIn {
-		if h.At.IsZero() {
-			h.At = time.Now().UTC()
-		}
-		at := h.At.UTC()
-		day := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
-		var ip any
-		if h.ClientIP != "" {
-			if net.ParseIP(h.ClientIP) == nil {
-				return fmt.Errorf("%w: client ip", ErrInvalid)
-			}
-			ip = h.ClientIP
-		}
-		batch.Queue(`
-			INSERT INTO proxy_session (day, at, node_id, client_ip, sni, bytes_up, bytes_down, status, dial_error)
-			VALUES ($1, $2, $3, $4::inet, $5, $6, $7, $8, $9)
-		`, day, at, nodeID, ip, clip(h.SNI, 255), h.BytesUp, h.BytesDown, clip(h.Status, 32), clip(h.DialError, 300))
+	return a.Unmap(), true
+}
+
+func parseUUID(s string) (pgtype.UUID, error) {
+	var u pgtype.UUID
+	if err := u.Scan(s); err != nil {
+		return u, fmt.Errorf("%w: node id", ErrInvalid)
 	}
-	br := s.pool.SendBatch(ctx, batch)
-	defer br.Close()
-	for range rowsIn {
-		if _, err := br.Exec(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return u, nil
 }
 
 func (s *Store) MaintainPartitions(ctx context.Context) error {
@@ -186,7 +202,13 @@ func (s *Store) MaintainPartitions(ctx context.Context) error {
 	if err := s.dropOlder(ctx, "proxy_session", cutoff); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, `DELETE FROM session WHERE expires_at < now()`)
+	if _, err := s.pool.Exec(ctx, `DELETE FROM session WHERE expires_at < now() OR last_seen_at < now() - make_interval(secs => $1)`, SessionIdle.Seconds()); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM audit_log
+		WHERE at < now() - make_interval(days => (SELECT audit_retention_days FROM setting WHERE id = 1))
+	`)
 	return err
 }
 
@@ -254,7 +276,7 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 		  (SELECT count(*) FROM dns_hit WHERE at > now() - interval '60 seconds' AND decision = 'acl'),
 		  (SELECT count(*) FROM proxy_session WHERE at > now() - interval '60 seconds'),
 		  (SELECT coalesce(sum(bytes_up + bytes_down), 0) FROM proxy_session WHERE at > now() - interval '24 hours'),
-		  (SELECT count(*) FROM node WHERE enabled AND (last_seen_at IS NULL OR last_seen_at < now() - interval '30 seconds'))
+		  (SELECT count(*) FROM node WHERE enabled AND NOT `+nodeFresh+`)
 	`).Scan(&o.QPS, &o.Refused, &o.Sessions, &o.Bytes, &o.Stale)
 	if err != nil {
 		return Overview{}, err
@@ -275,7 +297,6 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	now := time.Now()
 	for _, d := range domains {
 		row := BayRow{Name: d.Name, Balance: d.Balance, Enabled: d.Enabled, Cells: []BayCell{}}
 		for _, p := range o.BayProxies {
@@ -283,7 +304,7 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 			for _, w := range d.Weights {
 				if w.ProxyID == p.ID && w.On {
 					state = "dead"
-					if p.Fresh(now) && (p.PublicIPv4 != "" || p.PublicIPv6 != "") {
+					if p.Fresh && (p.PublicIPv4 != "" || p.PublicIPv6 != "") {
 						state = "live"
 					}
 					break

@@ -10,8 +10,6 @@ const (
 	BalanceRoundRobin = "round_robin"
 	BalanceWeighted   = "weighted"
 	BalanceSticky     = "sticky24"
-
-	LiveWindowSec = 30
 )
 
 type DNS struct {

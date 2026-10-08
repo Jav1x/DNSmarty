@@ -29,7 +29,7 @@ import (
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()})))
 	root := &cobra.Command{Use: "dnsmarty", SilenceUsage: true}
-	root.AddCommand(migrateCmd(), panelCmd(), dnsCmd(), proxyCmd())
+	root.AddCommand(migrateCmd(), panelCmd(), dnsCmd(), proxyCmd(), healthcheckCmd())
 	if err := root.Execute(); err != nil {
 		slog.Error("exit", "err", err)
 		os.Exit(1)
@@ -164,13 +164,19 @@ func dnsCmd() *cobra.Command {
 			metrics.Serve(ctx, envDefault("METRICS_ADDR", "127.0.0.1:9101"), slog.Default())
 			eng := dns.NewEngine(slog.Default())
 			eng.SetForwardLimit(envInt("DNS_FORWARD_MAX", 512))
+			stateDir := envDefault("STATE_DIR", "/var/lib/dnsmarty")
+			if !agent.Restore(stateDir, snapshot.RoleDNS, func(body []byte) error { return agent.ApplyDNS(body, eng) }) {
+				slog.Info("dns", "state", "нет сохранённого снимка")
+			}
 			stats := &agent.Stats{}
 			go agent.Collect(ctx, stats, eng.Hits(), nil)
 			errCh := make(chan error, 2)
 			go func() {
 				errCh <- agent.Listen(ctx, envDefault("AGENT_ADDR", ":9443"), nodeKey, agent.Config{
-					Role:  snapshot.RoleDNS,
-					Apply: func(body []byte) error { return agent.ApplyDNS(body, eng) },
+					Role: snapshot.RoleDNS,
+					Apply: agent.Persist(stateDir, snapshot.RoleDNS, func(body []byte) error {
+						return agent.ApplyDNS(body, eng)
+					}, func(err error) { slog.Warn("state", "err", err) }),
 					Version: func() int64 {
 						if s := eng.Snapshot(); s != nil {
 							return s.Version
@@ -206,13 +212,19 @@ func proxyCmd() *cobra.Command {
 			metrics.Serve(ctx, envDefault("METRICS_ADDR", "127.0.0.1:9102"), slog.Default())
 			srv := proxy.New(slog.Default(), envDefault("PROXY_HTTP_ADDR", ":80"), envDefault("PROXY_HTTPS_ADDR", ":443"))
 			srv.SetMaxConns(envInt("PROXY_MAX_CONNS", 4096))
+			stateDir := envDefault("STATE_DIR", "/var/lib/dnsmarty")
+			if !agent.Restore(stateDir, snapshot.RoleProxy, func(body []byte) error { return agent.ApplyProxy(body, srv) }) {
+				slog.Info("proxy", "state", "нет сохранённого снимка")
+			}
 			stats := &agent.Stats{}
 			go agent.Collect(ctx, stats, nil, srv.Reports())
 			errCh := make(chan error, 2)
 			go func() {
 				errCh <- agent.Listen(ctx, envDefault("AGENT_ADDR", ":9444"), nodeKey, agent.Config{
-					Role:  snapshot.RoleProxy,
-					Apply: func(body []byte) error { return agent.ApplyProxy(body, srv) },
+					Role: snapshot.RoleProxy,
+					Apply: agent.Persist(stateDir, snapshot.RoleProxy, func(body []byte) error {
+						return agent.ApplyProxy(body, srv)
+					}, func(err error) { slog.Warn("state", "err", err) }),
 					Version: func() int64 {
 						if s := srv.Snapshot(); s != nil {
 							return s.Version

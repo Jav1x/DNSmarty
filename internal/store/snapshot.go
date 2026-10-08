@@ -127,7 +127,7 @@ func loadDNSBody(ctx context.Context, tx pgx.Tx) (snapshot.DNS, error) {
 		  AND n.enabled
 		  AND n.role = 'proxy'
 		  AND n.last_seen_at IS NOT NULL
-		  AND n.last_seen_at > now() - interval '30 seconds'
+		  AND n.last_seen_at > now() - `+liveWindow+`
 		  AND (n.public_ipv4 IS NOT NULL OR n.public_ipv6 IS NOT NULL)
 		ORDER BY n.id::text
 	`)

@@ -79,7 +79,7 @@ dig @DNS_PUBLIC_IPV4 www.example.com A
 
 The A record is the live proxy's public address, TTL 30 by default. Unknown names are forwarded. Clients on the blacklist, or outside a non-empty whitelist, get `REFUSED` on 53, DoT, and DoH.
 
-If the panel cannot reach a proxy for 30 seconds, that IP leaves the next DNS snapshot. The name is not forwarded upstream. If the panel is down, the agent keeps the last snapshot.
+If the panel cannot reach a proxy for 30 seconds, that IP leaves the next DNS snapshot. The name is not forwarded upstream. If the panel is down, the agent keeps the last snapshot, and after a restart it loads it from `STATE_DIR` (`/var/lib/dnsmarty`).
 
 ## Develop from this tree
 

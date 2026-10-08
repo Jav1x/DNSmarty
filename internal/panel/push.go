@@ -175,7 +175,8 @@ func (s *Server) storeStats(ctx context.Context, n store.Node, stats agent.Stats
 			At: h.At, ClientIP: h.ClientIP, QName: h.QName, QType: h.QType, Rcode: h.Rcode, Decision: h.Decision,
 		})
 	}
-	if err := s.store.InsertHits(ctx, n.ID, hits); err != nil {
+	skippedHits, err := s.store.InsertHits(ctx, n.ID, hits)
+	if err != nil {
 		return err
 	}
 	sessions := make([]store.ProxyReport, 0, len(stats.Sessions))
@@ -184,5 +185,9 @@ func (s *Server) storeStats(ctx context.Context, n store.Node, stats agent.Stats
 			At: h.At, ClientIP: h.ClientIP, SNI: h.SNI, BytesUp: h.BytesUp, BytesDown: h.BytesDown, Status: h.Status, DialError: h.DialError,
 		})
 	}
-	return s.store.InsertSessions(ctx, n.ID, sessions)
+	skippedSessions, err := s.store.InsertSessions(ctx, n.ID, sessions)
+	if skippedHits+skippedSessions > 0 {
+		s.log.Warn("stats", "node", n.Name, "skipped_hits", skippedHits, "skipped_sessions", skippedSessions)
+	}
+	return err
 }

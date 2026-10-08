@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -41,10 +43,28 @@ func Open(ctx context.Context, dsn, sessionSecret, masterKey string) (*Store, er
 	if err != nil {
 		return nil, err
 	}
+	// Defaults for a single panel process. pool_* parameters in the DSN still win.
+	if !strings.Contains(dsn, "pool_max_conns") {
+		cfg.MaxConns = 16
+	}
+	if !strings.Contains(dsn, "pool_min_conns") {
+		cfg.MinConns = 2
+	}
+	if !strings.Contains(dsn, "pool_max_conn_idle_time") {
+		cfg.MaxConnIdleTime = 15 * time.Minute
+	}
+	if !strings.Contains(dsn, "pool_health_check_period") {
+		cfg.HealthCheckPeriod = 30 * time.Second
+	}
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
-	cfg.ConnConfig.RuntimeParams["TimeZone"] = "UTC"
+	rp := cfg.ConnConfig.RuntimeParams
+	rp["TimeZone"] = "UTC"
+	// A stuck query or an abandoned transaction must not hold a connection or locks forever.
+	setDefault(rp, "statement_timeout", "15s")
+	setDefault(rp, "idle_in_transaction_session_timeout", "30s")
+	setDefault(rp, "application_name", "dnsmarty")
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -86,6 +106,12 @@ func (s *Store) open(nonce, ciphertext []byte) ([]byte, error) {
 }
 
 func (s *Store) Close() { s.pool.Close() }
+
+func setDefault(m map[string]string, k, v string) {
+	if _, ok := m[k]; !ok {
+		m[k] = v
+	}
+}
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 

@@ -175,6 +175,41 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatal("domain dropped")
 	}
 
+	// A longer push interval widens the live window: 3 × 15 s keeps a proxy seen 40 s ago.
+	if _, err := pool.Exec(ctx, `UPDATE setting SET pull_interval_sec = 15`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE node SET last_seen_at = now() - interval '40 seconds' WHERE id = $1`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if wide, err := st.DNSSnapshot(ctx); err != nil || !snapshotHasIP(wide, "203.0.113.10") {
+		t.Fatalf("окно живости не расширилось: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE setting SET pull_interval_sec = 5`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A full agent buffer goes in whole: one bad address is skipped, a skewed clock is clamped.
+	hits := make([]store.DNSHit, 0, 2002)
+	for i := 0; i < 2000; i++ {
+		hits = append(hits, store.DNSHit{At: time.Now(), ClientIP: "198.51.100.1", QName: "bulk.test.", QType: "A", Rcode: "NOERROR", Decision: "forward"})
+	}
+	hits = append(hits,
+		store.DNSHit{At: time.Now(), ClientIP: "not-an-ip", QName: "bulk.test."},
+		store.DNSHit{At: time.Now().AddDate(0, 0, -30), ClientIP: "198.51.100.2", QName: "skew.test."},
+	)
+	skipped, err := st.InsertHits(ctx, node.ID, hits)
+	if err != nil || skipped != 1 {
+		t.Fatalf("вставка: skipped=%d err=%v", skipped, err)
+	}
+	var bulk, skew int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE qname = 'bulk.test.'), count(*) FILTER (WHERE qname = 'skew.test.' AND at > now() - interval '1 hour') FROM dns_hit`).Scan(&bulk, &skew); err != nil {
+		t.Fatal(err)
+	}
+	if bulk != 2000 || skew != 1 {
+		t.Fatalf("bulk=%d skew=%d", bulk, skew)
+	}
+
 	if err := st.EnsureAdmin(ctx, "admin", "panel-pass-long"); err != nil {
 		t.Fatal(err)
 	}
