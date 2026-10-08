@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"dnsmarty/internal/buildinfo"
 	"dnsmarty/internal/dns"
 	"dnsmarty/internal/metrics"
 	"dnsmarty/internal/proxy"
@@ -80,7 +81,18 @@ type dnsConfig struct {
 	NodeEnabled bool `json:"node_enabled"`
 }
 
-func Listen(ctx context.Context, addr string, nodeKey []byte, role string, apply ApplyFunc, stats *Stats, log *slog.Logger) error {
+// Config is what the management listener needs from a role.
+type Config struct {
+	Role string
+	// Apply installs a snapshot. It returns *StaleError for an older snapshot of the same epoch.
+	Apply ApplyFunc
+	// Version reports the snapshot version in use, 0 before the first one.
+	Version func() int64
+	Stats   *Stats
+	Log     *slog.Logger
+}
+
+func Listen(ctx context.Context, addr string, nodeKey []byte, cfg Config) error {
 	tlsCfg, err := ServerTLS(nodeKey)
 	if err != nil {
 		return err
@@ -89,25 +101,43 @@ func Listen(ctx context.Context, addr string, nodeKey []byte, role string, apply
 	if err != nil {
 		return err
 	}
-	return Serve(ctx, ln, role, apply, stats, log)
+	return Serve(ctx, ln, cfg)
 }
 
-func Serve(ctx context.Context, ln net.Listener, role string, apply ApplyFunc, stats *Stats, log *slog.Logger) error {
+func Serve(ctx context.Context, ln net.Listener, cfg Config) error {
+	log := cfg.Log
 	if log == nil {
 		log = slog.Default()
 	}
+	stats := cfg.Stats
+	if stats == nil {
+		stats = &Stats{}
+	}
+	version := cfg.Version
+	if version == nil {
+		version = func() int64 { return 0 }
+	}
 	metrics.Stale.Set(1)
+	// Pushes from a check and from the loop may overlap; the order check needs them serialized.
+	var applyMu sync.Mutex
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "role": role})
+		writeJSON(w, http.StatusOK, Health{OK: true, Role: cfg.Role, Version: buildinfo.Version, Snapshot: version()})
 	})
 	mux.HandleFunc("POST /config", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
 		if err != nil {
-			http.Error(w, "body", http.StatusBadRequest)
+			http.Error(w, "body", http.StatusRequestEntityTooLarge)
 			return
 		}
-		if err := apply(body); err != nil {
+		applyMu.Lock()
+		err = cfg.Apply(body)
+		applyMu.Unlock()
+		if have, ok := IsStale(err); ok {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "stale", "version": have})
+			return
+		}
+		if err != nil {
 			log.Warn("config", "err", err)
 			http.Error(w, "config", http.StatusBadRequest)
 			return
@@ -119,7 +149,15 @@ func Serve(ctx context.Context, ln net.Listener, role string, apply ApplyFunc, s
 		hits, sessions := stats.Drain()
 		writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "sessions": sessions})
 	})
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug),
+	}
 	go func() {
 		<-ctx.Done()
 		shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -127,7 +165,7 @@ func Serve(ctx context.Context, ln net.Listener, role string, apply ApplyFunc, s
 		_ = srv.Shutdown(shut)
 		_ = ln.Close()
 	}()
-	log.Info("agent", "addr", ln.Addr().String(), "role", role)
+	log.Info("agent", "addr", ln.Addr().String(), "role", cfg.Role)
 	err := srv.Serve(ln)
 	if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 		return nil
@@ -135,10 +173,19 @@ func Serve(ctx context.Context, ln net.Listener, role string, apply ApplyFunc, s
 	return err
 }
 
+// older reports a snapshot that must not replace the current one.
+// An equal version is applied again: node_enabled changes without a version bump.
+func older(curEpoch string, curVersion int64, epoch string, version int64) bool {
+	return curEpoch == epoch && version < curVersion
+}
+
 func ApplyDNS(body []byte, eng *dns.Engine) error {
 	var cfg dnsConfig
 	if err := json.Unmarshal(body, &cfg); err != nil {
 		return err
+	}
+	if cur := eng.Snapshot(); cur != nil && older(cur.Epoch, cur.Version, cfg.Epoch, cfg.Version) {
+		return &StaleError{Have: cur.Version}
 	}
 	eng.SetSnapshot(&cfg.DNS)
 	eng.SetEnabled(cfg.NodeEnabled)
@@ -149,6 +196,9 @@ func ApplyProxy(body []byte, srv *proxy.Server) error {
 	var cfg snapshot.ProxySnap
 	if err := json.Unmarshal(body, &cfg); err != nil {
 		return err
+	}
+	if cur := srv.Snapshot(); cur != nil && older(cur.Epoch, cur.Version, cfg.Epoch, cfg.Version) {
+		return &StaleError{Have: cur.Version}
 	}
 	srv.SetSnapshot(&cfg)
 	return nil

@@ -149,9 +149,17 @@ func dnsCmd() *cobra.Command {
 			go agent.Collect(ctx, stats, eng.Hits(), nil)
 			errCh := make(chan error, 2)
 			go func() {
-				errCh <- agent.Listen(ctx, envDefault("AGENT_ADDR", ":9443"), nodeKey, snapshot.RoleDNS, func(body []byte) error {
-					return agent.ApplyDNS(body, eng)
-				}, stats, slog.Default())
+				errCh <- agent.Listen(ctx, envDefault("AGENT_ADDR", ":9443"), nodeKey, agent.Config{
+					Role:  snapshot.RoleDNS,
+					Apply: func(body []byte) error { return agent.ApplyDNS(body, eng) },
+					Version: func() int64 {
+						if s := eng.Snapshot(); s != nil {
+							return s.Version
+						}
+						return 0
+					},
+					Stats: stats,
+				})
 			}()
 			go func() { errCh <- dns.Listen(ctx, eng, cfg) }()
 			slog.Info("dns", "dns", cfg.DNSAddr, "dot", cfg.DoTAddr, "doh", cfg.DoHAddr, "agent", envDefault("AGENT_ADDR", ":9443"))
@@ -182,9 +190,17 @@ func proxyCmd() *cobra.Command {
 			go agent.Collect(ctx, stats, nil, srv.Reports())
 			errCh := make(chan error, 2)
 			go func() {
-				errCh <- agent.Listen(ctx, envDefault("AGENT_ADDR", ":9444"), nodeKey, snapshot.RoleProxy, func(body []byte) error {
-					return agent.ApplyProxy(body, srv)
-				}, stats, slog.Default())
+				errCh <- agent.Listen(ctx, envDefault("AGENT_ADDR", ":9444"), nodeKey, agent.Config{
+					Role:  snapshot.RoleProxy,
+					Apply: func(body []byte) error { return agent.ApplyProxy(body, srv) },
+					Version: func() int64 {
+						if s := srv.Snapshot(); s != nil {
+							return s.Version
+						}
+						return 0
+					},
+					Stats: stats,
+				})
 			}()
 			go func() { errCh <- srv.Listen(ctx) }()
 			slog.Info("proxy", "http", envDefault("PROXY_HTTP_ADDR", ":80"), "https", envDefault("PROXY_HTTPS_ADDR", ":443"), "agent", envDefault("AGENT_ADDR", ":9444"))

@@ -67,7 +67,7 @@ func loadDNSBody(ctx context.Context, tx pgx.Tx) (snapshot.DNS, error) {
 	var body snapshot.DNS
 	var ttl, pull int
 	var boot string
-	if err := tx.QueryRow(ctx, `SELECT ttl, pull_interval_sec, bootstrap_cidr FROM setting WHERE id = 1`).Scan(&ttl, &pull, &boot); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT snapshot_epoch::text, ttl, pull_interval_sec, bootstrap_cidr FROM setting WHERE id = 1`).Scan(&body.Epoch, &ttl, &pull, &boot); err != nil {
 		return body, err
 	}
 	body.TTL = uint32(ttl)
@@ -189,9 +189,9 @@ func loadProxyBody(ctx context.Context, tx pgx.Tx, nodeID string) (snapshot.Prox
 		return body, mapErr(err)
 	}
 	if err := tx.QueryRow(ctx, `
-		SELECT pull_interval_sec, session_limit, dial_timeout_ms, idle_timeout_ms
+		SELECT snapshot_epoch::text, pull_interval_sec, session_limit, dial_timeout_ms, idle_timeout_ms
 		FROM setting WHERE id = 1
-	`).Scan(&body.PullIntervalSec, &body.SessionLimit, &body.DialTimeoutMs, &body.IdleTimeoutMs); err != nil {
+	`).Scan(&body.Epoch, &body.PullIntervalSec, &body.SessionLimit, &body.DialTimeoutMs, &body.IdleTimeoutMs); err != nil {
 		return body, err
 	}
 	rows, err := tx.Query(ctx, `SELECT addr FROM upstream ORDER BY ordinal, addr`)
@@ -295,4 +295,24 @@ func publishProxy(ctx context.Context, tx pgx.Tx, nodeID string, raw []byte) (in
 		return 0, err
 	}
 	return next, nil
+}
+
+// LatestSnapshotVersion is the newest version published for a role, 0 if none.
+// For proxies it is per node.
+func (s *Store) LatestSnapshotVersion(ctx context.Context, role, nodeID string) (int64, error) {
+	var v int64
+	var err error
+	if role == snapshot.RoleProxy {
+		err = s.pool.QueryRow(ctx, `SELECT coalesce(max(version), 0) FROM proxy_snapshot WHERE node_id = $1`, nodeID).Scan(&v)
+	} else {
+		err = s.pool.QueryRow(ctx, `SELECT coalesce(max(version), 0) FROM dns_snapshot`).Scan(&v)
+	}
+	return v, err
+}
+
+// RotateSnapshotEpoch starts a new epoch. Agents then accept the next snapshot whatever its version.
+// The panel calls it when an agent holds a version this database never published, i.e. after a restore.
+func (s *Store) RotateSnapshotEpoch(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `UPDATE setting SET snapshot_epoch = gen_random_uuid() WHERE id = 1`)
+	return err
 }

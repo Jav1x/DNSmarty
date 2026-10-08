@@ -15,6 +15,8 @@ const (
 )
 
 type DNS struct {
+	// Epoch changes when the panel database starts over, so versions restart without being rejected as old.
+	Epoch           string   `json:"epoch"`
 	Version         int64    `json:"version"`
 	TTL             uint32   `json:"ttl"`
 	PullIntervalSec int      `json:"pull_interval_sec"`
@@ -40,6 +42,7 @@ type Proxy struct {
 }
 
 type ProxySnap struct {
+	Epoch           string     `json:"epoch"`
 	Version         int64      `json:"version"`
 	PullIntervalSec int        `json:"pull_interval_sec"`
 	Names           []NameRule `json:"names"`

@@ -19,6 +19,14 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
+// Both sides derive two key pairs from the shared node key. The agent proves it holds
+// the key with agentInfo, the panel with panelInfo, so neither side can impersonate the other
+// to a third party that only saw one certificate.
+const (
+	agentInfo = "agent-tls-v1"
+	panelInfo = "panel-tls-v1"
+)
+
 func ParseKey(s string) ([]byte, error) {
 	s = strings.TrimSpace(s)
 	b, err := hex.DecodeString(s)
@@ -32,9 +40,9 @@ func EncodeKey(raw []byte) string {
 	return hex.EncodeToString(raw)
 }
 
-func privateKey(nodeKey []byte) (*ecdsa.PrivateKey, error) {
+func privateKey(nodeKey []byte, info string) (*ecdsa.PrivateKey, error) {
 	// Go 1.26 ignores io.Reader in ecdsa.GenerateKey, so the scalar comes from HKDF directly.
-	stream := hkdf.New(sha256.New, nodeKey, []byte("dnsmarty"), []byte("agent-tls-v1"))
+	stream := hkdf.New(sha256.New, nodeKey, []byte("dnsmarty"), []byte(info))
 	curve := elliptic.P256()
 	n := curve.Params().N
 	buf := make([]byte, 32)
@@ -55,18 +63,14 @@ func privateKey(nodeKey []byte) (*ecdsa.PrivateKey, error) {
 	}
 }
 
-func Certificate(nodeKey []byte) (tls.Certificate, error) {
-	priv, err := privateKey(nodeKey)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
+func certificate(priv *ecdsa.PrivateKey, cn string, usage x509.ExtKeyUsage) (tls.Certificate, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "dnsmarty-agent"},
+		Subject:               pkix.Name{CommonName: cn},
 		NotBefore:             time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		NotAfter:              time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		ExtKeyUsage:           []x509.ExtKeyUsage{usage},
 		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
@@ -76,40 +80,68 @@ func Certificate(nodeKey []byte) (tls.Certificate, error) {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv}, nil
 }
 
+// pin accepts the peer only if its leaf certificate carries exactly this public key.
+// VerifyConnection runs on every handshake, resumed ones included.
+func pin(want *ecdsa.PublicKey) func(tls.ConnectionState) error {
+	return func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 {
+			return errors.New("нет сертификата")
+		}
+		got, ok := cs.PeerCertificates[0].PublicKey.(*ecdsa.PublicKey)
+		if !ok || !got.Equal(want) {
+			return errors.New("ключ не совпал")
+		}
+		return nil
+	}
+}
+
+func Certificate(nodeKey []byte) (tls.Certificate, error) {
+	priv, err := privateKey(nodeKey, agentInfo)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return certificate(priv, "dnsmarty-agent", x509.ExtKeyUsageServerAuth)
+}
+
+// ServerTLS is the agent side: it presents the agent certificate and requires the panel one.
 func ServerTLS(nodeKey []byte) (*tls.Config, error) {
 	cert, err := Certificate(nodeKey)
 	if err != nil {
 		return nil, err
 	}
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{cert},
-	}, nil
-}
-
-func ClientTLS(nodeKey []byte) (*tls.Config, error) {
-	priv, err := privateKey(nodeKey)
+	panel, err := privateKey(nodeKey, panelInfo)
 	if err != nil {
 		return nil, err
 	}
-	want := &priv.PublicKey
 	return &tls.Config{
-		MinVersion:         tls.VersionTLS12,
+		MinVersion:             tls.VersionTLS13,
+		Certificates:           []tls.Certificate{cert},
+		ClientAuth:             tls.RequireAnyClientCert,
+		VerifyConnection:       pin(&panel.PublicKey),
+		SessionTicketsDisabled: true,
+	}, nil
+}
+
+// ClientTLS is the panel side: it presents the panel certificate and pins the agent one.
+func ClientTLS(nodeKey []byte) (*tls.Config, error) {
+	agent, err := privateKey(nodeKey, agentInfo)
+	if err != nil {
+		return nil, err
+	}
+	panel, err := privateKey(nodeKey, panelInfo)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := certificate(panel, "dnsmarty-panel", x509.ExtKeyUsageClientAuth)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		// Self-signed certificates have no chain to verify; pin replaces chain validation.
 		InsecureSkipVerify: true,
-		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
-			if len(raw) == 0 {
-				return errors.New("нет сертификата")
-			}
-			cert, err := x509.ParseCertificate(raw[0])
-			if err != nil {
-				return err
-			}
-			got, ok := cert.PublicKey.(*ecdsa.PublicKey)
-			if !ok || got.X.Cmp(want.X) != 0 || got.Y.Cmp(want.Y) != 0 {
-				return errors.New("ключ не совпал")
-			}
-			return nil
-		},
+		VerifyConnection:   pin(&agent.PublicKey),
 	}, nil
 }
 

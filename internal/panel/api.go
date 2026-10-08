@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -124,25 +125,37 @@ func (s *Server) nodesUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) nodesDelete(w http.ResponseWriter, r *http.Request) {
 	sess, _ := sessionUser(r, s.store)
-	if err := s.store.DeleteNode(r.Context(), sess.Username, r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.DeleteNode(r.Context(), sess.Username, id); err != nil {
 		writeErr(w, http.StatusBadRequest, human(err))
 		return
 	}
+	s.agents.Forget(id)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) nodesKey(w http.ResponseWriter, r *http.Request) {
 	sess, _ := sessionUser(r, s.store)
-	key, err := s.store.RotateKey(r.Context(), sess.Username, r.PathValue("id"))
+	id := r.PathValue("id")
+	key, err := s.store.RotateKey(r.Context(), sess.Username, id)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, human(err))
 		return
 	}
+	s.agents.Forget(id)
 	writeJSON(w, http.StatusOK, map[string]string{"key": key})
 }
 
 func (s *Server) nodesConnect(w http.ResponseWriter, r *http.Request) {
-	err := s.syncNode(r.Context(), r.PathValue("id"))
+	sess, _ := sessionUser(r, s.store)
+	id := r.PathValue("id")
+	ctx, cancel := context.WithTimeout(r.Context(), nodeTimeout)
+	defer cancel()
+	err := s.syncNode(ctx, id)
+	detail := map[string]any{"id": id, "ok": err == nil}
+	if err := s.store.RecordAudit(r.Context(), sess.Username, "node.check", detail); err != nil {
+		s.log.Warn("audit", "err", err)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return

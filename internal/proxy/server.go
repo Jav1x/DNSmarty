@@ -59,6 +59,8 @@ func (s *Server) SetSnapshot(p *snapshot.ProxySnap) {
 	metrics.ConfigVersion.Set(float64(p.Version))
 }
 
+func (s *Server) Snapshot() *snapshot.ProxySnap { return s.snap.Load() }
+
 func (s *Server) Reports() <-chan Report { return s.reports }
 
 func (s *Server) Listen(ctx context.Context) error {

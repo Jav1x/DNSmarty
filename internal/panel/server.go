@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"dnsmarty/internal/agent"
 	"dnsmarty/internal/store"
 	"dnsmarty/scripts"
 )
@@ -17,15 +18,16 @@ import (
 var distFS embed.FS
 
 type Server struct {
-	store *store.Store
-	log   *slog.Logger
+	store  *store.Store
+	log    *slog.Logger
+	agents *agent.Pool
 }
 
 func New(st *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{store: st, log: log}
+	return &Server{store: st, log: log, agents: agent.NewPool()}
 }
 
 func (s *Server) Handler() http.Handler {

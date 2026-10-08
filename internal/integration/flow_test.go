@@ -29,6 +29,7 @@ import (
 	"dnsmarty/internal/dns"
 	"dnsmarty/internal/migrate"
 	"dnsmarty/internal/panel"
+	"dnsmarty/internal/proxy"
 	"dnsmarty/internal/snapshot"
 	"dnsmarty/internal/store"
 )
@@ -94,7 +95,7 @@ func TestPostgresDecisions(t *testing.T) {
 	if err := st.CreateClient(ctx, "test", "127.0.0.1/32", "local", "allow", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetReachable(ctx, node.ID, 0); err != nil {
+	if err := st.SetReachable(ctx, node.ID, 0, "test"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,8 +209,9 @@ func TestPostgresDecisions(t *testing.T) {
 	}
 	agentCtx, cancelAgent := context.WithCancel(ctx)
 	t.Cleanup(cancelAgent)
+	proxySrv := proxy.New(nil, "127.0.0.1:0", "127.0.0.1:0")
 	go func() {
-		_ = agent.Serve(agentCtx, ln, snapshot.RoleProxy, func([]byte) error { return nil }, &agent.Stats{}, nil)
+		_ = agent.Serve(agentCtx, ln, agent.Config{Role: snapshot.RoleProxy, Apply: func(body []byte) error { return agent.ApplyProxy(body, proxySrv) }})
 	}()
 	livePort := ln.Addr().(*net.TCPAddr).Port
 	if _, err := pool.Exec(ctx, `UPDATE node SET agent_port = $2 WHERE id = $1`, node.ID, livePort); err != nil {
@@ -218,6 +220,30 @@ func TestPostgresDecisions(t *testing.T) {
 	ok := postConnect(t, ts.URL, cookie, node.ID)
 	if !ok.OK {
 		t.Fatalf("ожидали связь: %s", ok.Error)
+	}
+
+	// The agent got v1. A settings change makes v2.
+	if _, err := pool.Exec(ctx, `UPDATE setting SET session_limit = session_limit + 1`); err != nil {
+		t.Fatal(err)
+	}
+	if ok := postConnect(t, ts.URL, cookie, node.ID); !ok.OK {
+		t.Fatalf("v2: %s", ok.Error)
+	}
+	before := proxySrv.Snapshot()
+	if before == nil || before.Version != 2 {
+		t.Fatalf("ожидали v2 у агента: %+v", before)
+	}
+	// A restored database forgets v2 and would publish v1 again. The agent rejects it as old,
+	// the panel notices it never published the agent's version and starts a new epoch.
+	if _, err := pool.Exec(ctx, `DELETE FROM proxy_snapshot WHERE node_id = $1`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ok := postConnect(t, ts.URL, cookie, node.ID); !ok.OK {
+		t.Fatalf("после отката базы: %s", ok.Error)
+	}
+	after := proxySrv.Snapshot()
+	if after.Epoch == before.Epoch {
+		t.Fatalf("эпоха не сменилась: %s", after.Epoch)
 	}
 }
 

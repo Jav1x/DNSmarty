@@ -28,6 +28,7 @@ type Node struct {
 	AgentHost     string     `json:"agent_host"`
 	AgentPort     int        `json:"agent_port"`
 	LastError     string     `json:"last_error"`
+	AgentVersion  string     `json:"agent_version"`
 }
 
 func (n Node) Fresh(now time.Time) bool {
@@ -50,7 +51,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 		SELECT id::text, role, name,
 		       coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
 		       region, enabled, config_version, last_seen_at,
-		       agent_host, agent_port, last_error
+		       agent_host, agent_port, last_error, agent_version
 		FROM node
 		ORDER BY role, name
 	`)
@@ -61,7 +62,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 	var out []Node
 	for rows.Next() {
 		var n Node
-		if err := rows.Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError); err != nil {
+		if err := rows.Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -89,9 +90,9 @@ func (s *Store) CreateNode(ctx context.Context, actor string, in NodeInput) (key
 			INSERT INTO node (role, name, public_ipv4, public_ipv6, region, enabled, agent_host, agent_port, key_nonce, key_ciphertext)
 			VALUES ($1, $2, $3::inet, $4::inet, $5, $6, $7, $8, $9, $10)
 			RETURNING id::text, role, name, coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
-			          region, enabled, config_version, last_seen_at, agent_host, agent_port, last_error
+			          region, enabled, config_version, last_seen_at, agent_host, agent_port, last_error, agent_version
 		`, in.Role, in.Name, inetOrNil(in.IPv4), inetOrNil(in.IPv6), in.Region, in.Enabled, in.AgentHost, in.AgentPort, nonce, ct).Scan(
-			&node.ID, &node.Role, &node.Name, &node.PublicIPv4, &node.PublicIPv6, &node.Region, &node.Enabled, &node.ConfigVersion, &node.LastSeen, &node.AgentHost, &node.AgentPort, &node.LastError,
+			&node.ID, &node.Role, &node.Name, &node.PublicIPv4, &node.PublicIPv6, &node.Region, &node.Enabled, &node.ConfigVersion, &node.LastSeen, &node.AgentHost, &node.AgentPort, &node.LastError, &node.AgentVersion,
 		)
 		if err != nil {
 			return mapErr(err)
@@ -165,10 +166,10 @@ func (s *Store) NodeKey(ctx context.Context, id string) ([]byte, error) {
 	return s.open(nonce, ct)
 }
 
-func (s *Store) SetReachable(ctx context.Context, id string, version int64) error {
+func (s *Store) SetReachable(ctx context.Context, id string, version int64, agentVersion string) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE node SET last_seen_at = now(), config_version = $2, last_error = '' WHERE id = $1
-	`, id, version)
+		UPDATE node SET last_seen_at = now(), config_version = $2, agent_version = $3, last_error = '' WHERE id = $1
+	`, id, version, clip(agentVersion, 64))
 	if err != nil {
 		return err
 	}
@@ -243,9 +244,9 @@ func (s *Store) GetNode(ctx context.Context, id string) (Node, error) {
 		SELECT id::text, role, name,
 		       coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
 		       region, enabled, config_version, last_seen_at,
-		       agent_host, agent_port, last_error
+		       agent_host, agent_port, last_error, agent_version
 		FROM node WHERE id = $1
-	`, id).Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError)
+	`, id).Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion)
 	if err != nil {
 		return Node{}, mapErr(err)
 	}
