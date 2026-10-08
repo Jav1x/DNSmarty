@@ -90,7 +90,7 @@ cp .env.example .env
 docker compose --profile panel up -d --build
 ```
 
-Интерфейс в `web/`. `npm run dev` ходит в API на `127.0.0.1:8080`. Сборка образа сама запускает `npm run build`. Не коммитьте `web/node_modules` и `internal/panel/dist/assets`.
+Интерфейс в `web/`. `npm run dev` ходит в API на `127.0.0.1:8080`; по голому HTTP задайте `PANEL_COOKIE_SECURE=false`, иначе браузер не сохранит cookie сессии. Сборка образа сама запускает `npm run build`. Не коммитьте `web/node_modules` и `internal/panel/dist/assets`.
 
 ```bash
 go test ./...

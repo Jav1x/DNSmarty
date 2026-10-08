@@ -1,23 +1,27 @@
 import { Fragment, useEffect, useState } from "react";
 import { NavLink, Navigate, Outlet, Route, Routes, useNavigate } from "react-router-dom";
-import { ApiError, api } from "./api";
+import { ApiError, api, setCSRF } from "./api";
 import { LangSwitch, useI18n } from "./i18n";
 
 export function App() {
   const [user, setUser] = useState(undefined);
   useEffect(() => {
-    api("/api/me").then((d) => setUser(d.user)).catch(() => setUser(null));
+    api("/api/me").then((d) => {
+      setUser(d.user);
+      setCSRF(d.csrf);
+    }).catch(() => setUser(null));
   }, []);
   if (user === undefined) return null;
   return (
     <Routes>
-      <Route path="/login" element={user ? <Navigate to="/" /> : <Login onIn={setUser} />} />
+      <Route path="/login" element={user ? <Navigate to="/" /> : <Login onIn={(u, csrf) => { setUser(u); setCSRF(csrf); }} />} />
       <Route element={user ? <Shell user={user} onOut={() => setUser(null)} /> : <Navigate to="/login" />}>
         <Route path="/" element={<Overview />} />
         <Route path="/nodes" element={<Nodes />} />
         <Route path="/domains" element={<Domains />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/logs" element={<Logs />} />
+        <Route path="/account" element={<Account />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/audit" element={<Audit />} />
       </Route>
@@ -33,7 +37,7 @@ function Login({ onIn }) {
     const data = new FormData(event.target);
     try {
       const out = await api("/api/login", { method: "POST", body: JSON.stringify({ username: data.get("username"), password: data.get("password") }) });
-      onIn(out.user);
+      onIn(out.user, out.csrf);
     } catch (e) {
       setError(err(e.message));
     }
@@ -62,6 +66,7 @@ function Shell({ user, onOut }) {
     ["/logs", "logs"],
     ["/settings", "settings"],
     ["/audit", "audit"],
+    ["/account", "account"],
   ];
   async function logout() {
     await api("/api/logout", { method: "POST" });
@@ -730,6 +735,86 @@ function Settings() {
             </div>
           </form>
         ))}
+      </section>
+    </>
+  );
+}
+
+function Account() {
+  const { t, err } = useI18n();
+  const { data, error, setError, reload } = useLoad("/api/sessions");
+  const [msg, setMsg] = useState("");
+  const [pwdError, setPwdError] = useState("");
+  async function changePassword(event) {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    setPwdError("");
+    setMsg("");
+    if (form.get("next") !== form.get("confirm")) {
+      setPwdError(t("passwordMismatch"));
+      return;
+    }
+    try {
+      await api("/api/password", { method: "POST", body: JSON.stringify({ current: form.get("current"), next: form.get("next") }) });
+      event.target.reset();
+      setMsg(t("passwordChanged"));
+      reload();
+    } catch (e) { setPwdError(e.message); }
+  }
+  async function revoke(s) {
+    if (!window.confirm(t("confirmRevoke"))) return;
+    try {
+      await api(`/api/sessions/${s.id}`, { method: "DELETE" });
+      reload();
+    } catch (e) { setError(e.message); }
+  }
+  async function revokeOthers() {
+    if (!window.confirm(t("confirmRevokeOthers"))) return;
+    try {
+      const out = await api("/api/sessions/revoke-others", { method: "POST" });
+      setMsg(t("revokedN", { n: out.revoked }));
+      reload();
+    } catch (e) { setError(e.message); }
+  }
+  const rows = data || [];
+  return (
+    <>
+      {msg && <div className="banner ok">{msg}</div>}
+      <section className="mod">
+        <h2>{t("changePassword")}</h2>
+        <Err text={pwdError} />
+        <form onSubmit={changePassword}>
+          <div className="grid">
+            <div><label>{t("currentPassword")}</label><input name="current" type="password" autoComplete="current-password" required /></div>
+            <div><label>{t("newPassword")}</label><input name="next" type="password" autoComplete="new-password" minLength="12" maxLength="72" required /></div>
+            <div><label>{t("confirmPassword")}</label><input name="confirm" type="password" autoComplete="new-password" minLength="12" maxLength="72" required /></div>
+          </div>
+          <p className="empty">{t("passwordHint")}</p>
+          <p><button type="submit">{t("save")}</button></p>
+        </form>
+      </section>
+      <section className="mod">
+        <div className="toolbar">
+          <h2>{t("activeSessions")}</h2>
+          {rows.length > 1 && <button type="button" className="ghost" onClick={revokeOthers}>{t("revokeOthers")}</button>}
+        </div>
+        <Err text={error} />
+        <table>
+          <thead><tr><th>{t("lastSeen")}</th><th>{t("signedIn")}</th><th>IP</th><th>{t("browser")}</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((s) => (
+              <tr key={s.id}>
+                <td>{new Date(s.last_seen_at).toLocaleString()}</td>
+                <td>{new Date(s.created_at).toLocaleString()}</td>
+                <td className="mono">{s.ip || "—"}</td>
+                <td title={s.user_agent}>{s.user_agent.slice(0, 60) || "—"}</td>
+                <td>{s.current
+                  ? <span className="empty">{t("thisDevice")}</span>
+                  : <button type="button" className="ghost tiny" onClick={() => revoke(s)}>{t("revoke")}</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
     </>
   );

@@ -1,14 +1,24 @@
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, code) {
     super(message);
     this.status = status;
+    this.code = code;
   }
+}
+
+let csrfToken = "";
+
+export function setCSRF(token) {
+  csrfToken = token;
 }
 
 export async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body && !(options.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
+  }
+  if (options.method && options.method !== "GET" && options.method !== "HEAD") {
+    headers["X-CSRF-Token"] = csrfToken;
   }
   const response = await fetch(path, { credentials: "same-origin", ...options, headers });
   const text = await response.text();
@@ -17,14 +27,14 @@ export async function api(path, options = {}) {
     try {
       data = JSON.parse(text);
     } catch {
-      data = { error: text };
+      data = { error: text, code: "unknown" };
     }
   }
   if (response.status === 401) {
-    throw new ApiError(data?.error || "нужен вход", 401);
+    throw new ApiError(data?.error || "нужен вход", 401, data?.code || "unauthorized");
   }
   if (!response.ok) {
-    throw new ApiError(data?.error || "ошибка запроса", response.status);
+    throw new ApiError(data?.error || "ошибка запроса", response.status, data?.code || "unknown");
   }
   return data;
 }

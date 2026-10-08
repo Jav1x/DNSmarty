@@ -2,7 +2,6 @@ package panel
 
 import (
 	"embed"
-	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -18,16 +17,21 @@ import (
 var distFS embed.FS
 
 type Server struct {
-	store  *store.Store
-	log    *slog.Logger
-	agents *agent.Pool
+	store   *store.Store
+	log     *slog.Logger
+	agents  *agent.Pool
+	opts    Options
+	limiter *loginLimiter
 }
 
-func New(st *store.Store, log *slog.Logger) *Server {
+func New(st *store.Store, log *slog.Logger, opts Options) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{store: st, log: log, agents: agent.NewPool()}
+	if opts.TrustedProxies == nil {
+		opts.TrustedProxies = DefaultTrustedProxies()
+	}
+	return &Server{store: st, log: log, agents: agent.NewPool(), opts: opts, limiter: newLoginLimiter()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -37,6 +41,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.withAuth(s.logout))
 	mux.HandleFunc("GET /api/me", s.withAuth(s.me))
+	mux.HandleFunc("POST /api/password", s.withAuth(s.passwordChange))
+	mux.HandleFunc("GET /api/sessions", s.withAuth(s.sessions))
+	mux.HandleFunc("POST /api/sessions/revoke-others", s.withAuth(s.sessionsRevokeOthers))
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.withAuth(s.sessionsDelete))
 	mux.HandleFunc("GET /api/overview", s.withAuth(s.overview))
 	mux.HandleFunc("GET /api/nodes", s.withAuth(s.nodes))
 	mux.HandleFunc("POST /api/nodes", s.withAuth(s.nodesCreate))
@@ -60,9 +68,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/upstreams", s.withAuth(s.upstreamCreate))
 	mux.HandleFunc("DELETE /api/upstreams/{id}", s.withAuth(s.upstreamDelete))
 	mux.HandleFunc("POST /api/upstreams/{id}", s.withAuth(s.upstreamUpdate))
-	mux.HandleFunc("GET /api/audit", s.withAuth(s.audit))
+	mux.HandleFunc("GET /api/audit", s.withAuth(s.auditLog))
 	mux.HandleFunc("/", s.spa)
-	return mux
+	return s.observe(s.secureHeaders(mux))
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +90,7 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) spa(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		http.NotFound(w, r)
+		writeErr(w, http.StatusNotFound, "not_found", "Нет такого метода API.")
 		return
 	}
 	sub, err := fs.Sub(distFS, "dist")
@@ -137,47 +145,4 @@ func contentType(path string) string {
 	default:
 		return "application/octet-stream"
 	}
-}
-
-func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie("dnsmarty")
-		if err != nil || c.Value == "" {
-			writeErr(w, http.StatusUnauthorized, "нужен вход")
-			return
-		}
-		if _, err := s.store.LookupSession(r.Context(), c.Value); err != nil {
-			writeErr(w, http.StatusUnauthorized, "нужен вход")
-			return
-		}
-		next(w, r)
-	}
-}
-
-func sessionUser(r *http.Request, st *store.Store) (store.Session, bool) {
-	c, err := r.Cookie("dnsmarty")
-	if err != nil {
-		return store.Session{}, false
-	}
-	sess, err := st.LookupSession(r.Context(), c.Value)
-	if err != nil {
-		return store.Session{}, false
-	}
-	return sess, true
-}
-
-func human(err error) string {
-	if err == nil {
-		return ""
-	}
-	if errors.Is(err, store.ErrConflict) {
-		return "Такая запись уже есть."
-	}
-	if errors.Is(err, store.ErrNotFound) {
-		return "Запись не найдена."
-	}
-	if errors.Is(err, store.ErrInvalid) {
-		return "Проверьте поле: " + strings.TrimPrefix(err.Error(), "invalid: ")
-	}
-	return "Не удалось сохранить."
 }

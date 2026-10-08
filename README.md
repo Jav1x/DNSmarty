@@ -90,7 +90,7 @@ cp .env.example .env
 docker compose --profile panel up -d --build
 ```
 
-`web/` is the UI. `npm run dev` proxies the API on `127.0.0.1:8080`. The image build runs `npm run build` itself. Do not commit `web/node_modules` or `internal/panel/dist/assets`.
+`web/` is the UI. `npm run dev` proxies the API on `127.0.0.1:8080`; over plain HTTP set `PANEL_COOKIE_SECURE=false`, or the browser drops the session cookie. The image build runs `npm run build` itself. Do not commit `web/node_modules` or `internal/panel/dist/assets`.
 
 ```bash
 go test ./...

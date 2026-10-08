@@ -11,11 +11,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,25 +178,56 @@ func TestPostgresDecisions(t *testing.T) {
 	if err := st.EnsureAdmin(ctx, "admin", "panel-pass-long"); err != nil {
 		t.Fatal(err)
 	}
-	ui := panel.New(st, nil)
+	ui := panel.New(st, nil, panel.Options{Version: "test"})
 	ts := httptest.NewServer(ui.Handler())
 	t.Cleanup(ts.Close)
-	loginBody := bytes.NewBufferString(`{"username":"admin","password":"panel-pass-long"}`)
-	loginResp, err := http.Post(ts.URL+"/api/login", "application/json", loginBody)
+	sess := login(t, ts.URL, "admin", "panel-pass-long")
+
+	// CSP header on the SPA.
+	rootResp, err := http.Get(ts.URL + "/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	loginResp.Body.Close()
-	var cookie *http.Cookie
-	for _, c := range loginResp.Cookies() {
-		if c.Name == "dnsmarty" {
-			cookie = c
-		}
+	rootResp.Body.Close()
+	if !strings.Contains(rootResp.Header.Get("Content-Security-Policy"), "default-src 'self'") {
+		t.Fatalf("нет CSP: %q", rootResp.Header.Get("Content-Security-Policy"))
 	}
-	if cookie == nil {
-		t.Fatal("нет сессии")
+	// State change without the CSRF header is refused.
+	if code := apiCall(t, ts.URL, http.MethodPost, "/api/groups", `{"name":"x"}`, "application/json", sess.cookie, ""); code != http.StatusForbidden {
+		t.Fatalf("без CSRF: %d", code)
 	}
-	closed := postConnect(t, ts.URL, cookie, node.ID)
+	// Form-encoded body is refused.
+	if code := apiCall(t, ts.URL, http.MethodPost, "/api/groups", `name=x`, "application/x-www-form-urlencoded", sess.cookie, sess.csrf); code != http.StatusUnsupportedMediaType {
+		t.Fatalf("form body: %d", code)
+	}
+
+	// Password change ends other sessions but keeps this one.
+	other := login(t, ts.URL, "admin", "panel-pass-long")
+	if code := apiCall(t, ts.URL, http.MethodPost, "/api/password", `{"current":"wrong","next":"another-pass-long"}`, "application/json", sess.cookie, sess.csrf); code != http.StatusBadRequest {
+		t.Fatalf("неверный текущий пароль: %d", code)
+	}
+	if code := apiCall(t, ts.URL, http.MethodPost, "/api/password", `{"current":"panel-pass-long","next":"short"}`, "application/json", sess.cookie, sess.csrf); code != http.StatusBadRequest {
+		t.Fatalf("короткий пароль: %d", code)
+	}
+	if code := apiCall(t, ts.URL, http.MethodPost, "/api/password", `{"current":"panel-pass-long","next":"another-pass-long"}`, "application/json", sess.cookie, sess.csrf); code != http.StatusOK {
+		t.Fatalf("смена пароля: %d", code)
+	}
+	if code := apiCall(t, ts.URL, http.MethodGet, "/api/me", "", "", other.cookie, ""); code != http.StatusUnauthorized {
+		t.Fatalf("вторая сессия жива: %d", code)
+	}
+	if code := apiCall(t, ts.URL, http.MethodGet, "/api/me", "", "", sess.cookie, ""); code != http.StatusOK {
+		t.Fatalf("текущая сессия умерла: %d", code)
+	}
+
+	// Rate limit: sixth wrong password is blocked.
+	for i := 0; i < 5; i++ {
+		apiCall(t, ts.URL, http.MethodPost, "/api/login", `{"username":"admin","password":"nope"}`, "application/json", nil, "")
+	}
+	if code := apiCall(t, ts.URL, http.MethodPost, "/api/login", `{"username":"admin","password":"another-pass-long"}`, "application/json", nil, ""); code != http.StatusTooManyRequests {
+		t.Fatalf("шестая попытка: %d", code)
+	}
+
+	closed := postConnect(t, ts.URL, sess, node.ID)
 	if closed.OK {
 		t.Fatal("закрытый порт не должен подключаться")
 	}
@@ -219,7 +252,7 @@ func TestPostgresDecisions(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE node SET agent_port = $2 WHERE id = $1`, node.ID, livePort); err != nil {
 		t.Fatal(err)
 	}
-	ok := postConnect(t, ts.URL, cookie, node.ID)
+	ok := postConnect(t, ts.URL, sess, node.ID)
 	if !ok.OK {
 		t.Fatalf("ожидали связь: %s", ok.Error)
 	}
@@ -228,7 +261,7 @@ func TestPostgresDecisions(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE setting SET session_limit = session_limit + 1`); err != nil {
 		t.Fatal(err)
 	}
-	if ok := postConnect(t, ts.URL, cookie, node.ID); !ok.OK {
+	if ok := postConnect(t, ts.URL, sess, node.ID); !ok.OK {
 		t.Fatalf("v2: %s", ok.Error)
 	}
 	before := proxySrv.Snapshot()
@@ -244,7 +277,7 @@ func TestPostgresDecisions(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DELETE FROM proxy_snapshot WHERE node_id = $1`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if ok := postConnect(t, ts.URL, cookie, node.ID); !ok.OK {
+	if ok := postConnect(t, ts.URL, sess, node.ID); !ok.OK {
 		t.Fatalf("после отката базы: %s", ok.Error)
 	}
 	after := proxySrv.Snapshot()
@@ -258,13 +291,14 @@ type connectResult struct {
 	Error string `json:"error"`
 }
 
-func postConnect(t *testing.T, base string, cookie *http.Cookie, id string) connectResult {
+func postConnect(t *testing.T, base string, sess session, id string) connectResult {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, base+"/api/nodes/"+id+"/connect", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.AddCookie(cookie)
+	req.AddCookie(sess.cookie)
+	req.Header.Set("X-CSRF-Token", sess.csrf)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -275,6 +309,61 @@ func postConnect(t *testing.T, base string, cookie *http.Cookie, id string) conn
 		t.Fatal(err)
 	}
 	return out
+}
+
+type session struct {
+	cookie *http.Cookie
+	csrf   string
+}
+
+func login(t *testing.T, base, user, pass string) session {
+	t.Helper()
+	body := fmt.Sprintf(`{"username":%q,"password":%q}`, user, pass)
+	resp, err := http.Post(base+"/api/login", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		CSRF string `json:"csrf"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("вход: %d %v", resp.StatusCode, err)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == "dnsmarty" {
+			if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+				t.Fatalf("флаги cookie: %+v", c)
+			}
+			return session{cookie: c, csrf: out.CSRF}
+		}
+	}
+	t.Fatal("нет сессии")
+	return session{}
+}
+
+func apiCall(t *testing.T, base, method, path, body, contentType string, cookie *http.Cookie, csrf string) int {
+	t.Helper()
+	req, err := http.NewRequest(method, base+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if csrf != "" {
+		req.Header.Set("X-CSRF-Token", csrf)
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	return resp.StatusCode
 }
 
 func snapshotHasIP(s snapshot.DNS, ip string) bool {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"dnsmarty/internal/agent"
+	"dnsmarty/internal/buildinfo"
 	"dnsmarty/internal/config"
 	"dnsmarty/internal/dns"
 	"dnsmarty/internal/metrics"
@@ -25,7 +27,7 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()})))
 	root := &cobra.Command{Use: "dnsmarty", SilenceUsage: true}
 	root.AddCommand(migrateCmd(), panelCmd(), dnsCmd(), proxyCmd())
 	if err := root.Execute(); err != nil {
@@ -98,17 +100,31 @@ func panelCmd() *cobra.Command {
 				return err
 			}
 			go partitionLoop(ctx, st)
-			ui := panel.New(st, slog.Default())
+			opts, err := panelOptions()
+			if err != nil {
+				return err
+			}
+			ui := panel.New(st, slog.Default(), opts)
 			go ui.PushLoop(ctx)
 			metrics.Serve(ctx, metricsAddr, slog.Default())
-			srv := &http.Server{Addr: listen, Handler: ui.Handler(), ReadHeaderTimeout: 5 * time.Second}
+			srv := &http.Server{
+				Addr:              listen,
+				Handler:           ui.Handler(),
+				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       15 * time.Second,
+				// Node checks run up to 15 s inside a request.
+				WriteTimeout:   30 * time.Second,
+				IdleTimeout:    120 * time.Second,
+				MaxHeaderBytes: 64 << 10,
+				ErrorLog:       slog.NewLogLogger(slog.Default().Handler(), slog.LevelDebug),
+			}
 			go func() {
 				<-ctx.Done()
 				shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				_ = srv.Shutdown(shut)
 			}()
-			slog.Info("panel", "addr", listen, "metrics", metricsAddr)
+			slog.Info("panel", "addr", listen, "metrics", metricsAddr, "version", buildinfo.Version, "cookie_secure", opts.CookieSecure)
 			err = srv.ListenAndServe()
 			if errors.Is(err, http.ErrServerClosed) {
 				return nil
@@ -218,6 +234,27 @@ func proxyCmd() *cobra.Command {
 	}
 }
 
+// panelOptions reads PANEL_COOKIE_SECURE (default true) and PANEL_TRUSTED_PROXIES
+// (comma-separated CIDRs, default loopback and private networks).
+func panelOptions() (panel.Options, error) {
+	opts := panel.Options{CookieSecure: true, Version: buildinfo.Version}
+	if v := envDefault("PANEL_COOKIE_SECURE", ""); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return opts, fmt.Errorf("PANEL_COOKIE_SECURE: %w", err)
+		}
+		opts.CookieSecure = b
+	}
+	if v := envDefault("PANEL_TRUSTED_PROXIES", ""); v != "" {
+		p, err := panel.ParsePrefixes(v)
+		if err != nil {
+			return opts, err
+		}
+		opts.TrustedProxies = p
+	}
+	return opts, nil
+}
+
 func nodeKey() ([]byte, error) {
 	raw, err := config.Must("NODE_KEY")
 	if err != nil {
@@ -232,6 +269,15 @@ func envDefault(key, def string) string {
 		return def
 	}
 	return v
+}
+
+// logLevel reads LOG_LEVEL: debug, info (default), warn, error.
+func logLevel() slog.Level {
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(os.Getenv("LOG_LEVEL"))); err != nil {
+		return slog.LevelInfo
+	}
+	return l
 }
 
 func envInt(key string, def int) int {
