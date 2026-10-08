@@ -364,7 +364,33 @@ func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", "Список сетей не прочитан.")
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	allowOn, denyOn, err := s.store.ListKinds(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", "Список сетей не прочитан.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows":          rows,
+		"allow_enabled": allowOn,
+		"deny_enabled":  denyOn,
+	})
+}
+
+// clientsKinds toggles whole lists on or off. The change reaches the nodes on the next push.
+func (s *Server) clientsKinds(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	var body struct {
+		AllowEnabled bool `json:"allow_enabled"`
+		DenyEnabled  bool `json:"deny_enabled"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if err := s.store.SetListKinds(r.Context(), sess.Username, body.AllowEnabled, body.DenyEnabled); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) clientsCreate(w http.ResponseWriter, r *http.Request) {

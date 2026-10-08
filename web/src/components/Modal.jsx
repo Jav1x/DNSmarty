@@ -3,7 +3,8 @@ import { X } from "lucide-react";
 import { useI18n } from "../i18n";
 
 // Modal traps focus inside, closes on Escape and restores focus to the opener.
-export function Modal({ title, onClose, children, wide }) {
+// stacked puts the dialog above other open modals (a confirm inside an editor).
+export function Modal({ title, onClose, children, wide, stacked }) {
   const { t } = useI18n();
   const box = useRef(null);
   const opener = useRef(null);
@@ -30,7 +31,7 @@ export function Modal({ title, onClose, children, wide }) {
   }, [onClose]);
 
   return (
-    <div className="modal-back" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className={`modal-back${stacked ? " stacked" : ""}`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className={`modal${wide ? " confirm" : ""}`} role="dialog" aria-modal="true" aria-label={title} ref={box}>
         <div className="modal-head">
           <h2>{title}</h2>

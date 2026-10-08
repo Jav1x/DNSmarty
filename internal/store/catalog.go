@@ -319,6 +319,25 @@ func (s *Store) ListClients(ctx context.Context) ([]ClientCIDR, error) {
 	return out, rows.Err()
 }
 
+// ListKinds returns whether the allow and deny lists are applied at all. The UI
+// greys the whole list block out when a list is off.
+func (s *Store) ListKinds(ctx context.Context) (allowOn, denyOn bool, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT allow_enabled, deny_enabled FROM setting WHERE id = 1`).Scan(&allowOn, &denyOn)
+	return allowOn, denyOn, err
+}
+
+// SetListKinds toggles whole lists and writes the change to the audit log.
+// The next push cycle delivers the change to the nodes.
+func (s *Store) SetListKinds(ctx context.Context, actor string, allowOn, denyOn bool) error {
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE setting SET allow_enabled = $1, deny_enabled = $2 WHERE id = 1`, allowOn, denyOn); err != nil {
+			return err
+		}
+		raw, _ := json.Marshal(map[string]bool{"allow_enabled": allowOn, "deny_enabled": denyOn})
+		return auditTx(ctx, tx, actor, "lists.toggle", raw)
+	})
+}
+
 func (s *Store) CreateClient(ctx context.Context, actor string, cidr, label, kind string, enabled bool) error {
 	norm, err := normalizeCIDR(cidr)
 	if err != nil {

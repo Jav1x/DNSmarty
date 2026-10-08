@@ -61,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/groups/{id}", s.withAuth(s.groupsDelete))
 	mux.HandleFunc("GET /api/clients", s.withAuth(s.clients))
 	mux.HandleFunc("POST /api/clients", s.withAuth(s.clientsCreate))
+	mux.HandleFunc("POST /api/clients/kinds", s.withAuth(s.clientsKinds))
 	mux.HandleFunc("DELETE /api/clients/{id}", s.withAuth(s.clientsDelete))
 	mux.HandleFunc("POST /api/clients/{id}", s.withAuth(s.clientsUpdate))
 	mux.HandleFunc("GET /api/logs", s.withAuth(s.logs))

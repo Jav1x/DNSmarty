@@ -30,6 +30,8 @@
   display: flex; align-items: flex-start; justify-content: center;
   padding: 48px var(--space-4);
 }
+/* A confirm dialog opened on top of another modal. */
+.modal-back.stacked { z-index: 50; }
 .modal {
   width: min(760px, 100%);
   max-height: calc(100vh - 96px);
@@ -74,6 +76,28 @@
   padding: var(--space-2) var(--space-3); font-size: 14px;
 }
 .toast.err { border-left-color: var(--danger); }
+
+/* iOS-style switch */
+.switch {
+  position: relative; display: inline-flex; flex: none;
+  width: 44px; height: 26px;
+  background: var(--gray-300); border-radius: 13px;
+  border: 0; padding: 0; cursor: pointer;
+  transition: background 0.2s ease;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: var(--shadow-1);
+  transition: transform 0.2s ease;
+}
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(18px); }
+.switch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.switch:disabled { opacity: 0.45; cursor: default; }
+
+/* A block switched off: dimmed, its controls inert. */
+.block-off { opacity: 0.45; pointer-events: none; user-select: none; }
 
 /* Sparkline */
 .spark { display: block; width: 100%; height: 40px; }

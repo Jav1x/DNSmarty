@@ -189,6 +189,22 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A switched-off list disappears from the snapshot; bootstrap CIDRs survive either way.
+	if _, err := pool.Exec(ctx, `UPDATE setting SET bootstrap_cidr = '203.0.113.5/32'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE setting SET allow_enabled = false, deny_enabled = false`); err != nil {
+		t.Fatal(err)
+	}
+	if off, err := st.DNSSnapshot(ctx); err != nil {
+		t.Fatal(err)
+	} else if len(off.Allow) != 0 || len(off.Deny) != 0 || len(off.Bootstrap) != 1 {
+		t.Fatalf("выключенные списки всё ещё в снимке: allow=%v deny=%v boot=%v", off.Allow, off.Deny, off.Bootstrap)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE setting SET allow_enabled = true, deny_enabled = true`); err != nil {
+		t.Fatal(err)
+	}
+
 	// A full agent buffer goes in whole: one bad address is skipped, a skewed clock is clamped.
 	hits := make([]store.DNSHit, 0, 2002)
 	for i := 0; i < 2000; i++ {

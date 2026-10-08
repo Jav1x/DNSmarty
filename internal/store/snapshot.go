@@ -225,9 +225,11 @@ func loadProxyBody(ctx context.Context, tx pgx.Tx, nodeID string) (snapshot.Prox
 }
 
 // loadACL returns the enabled client lists and the bootstrap CIDRs. DNS and proxy snapshots share them.
+// A list switched off in the panel is skipped entirely; bootstrap CIDRs stay allowed regardless.
 func loadACL(ctx context.Context, tx pgx.Tx) (allow, deny, bootstrap []string, err error) {
 	var boot string
-	if err := tx.QueryRow(ctx, `SELECT bootstrap_cidr FROM setting WHERE id = 1`).Scan(&boot); err != nil {
+	var allowOn, denyOn bool
+	if err := tx.QueryRow(ctx, `SELECT bootstrap_cidr, allow_enabled, deny_enabled FROM setting WHERE id = 1`).Scan(&boot, &allowOn, &denyOn); err != nil {
 		return nil, nil, nil, err
 	}
 	rows, err := tx.Query(ctx, `SELECT cidr::text, list_kind FROM client_cidr WHERE enabled ORDER BY cidr::text`)
@@ -241,8 +243,10 @@ func loadACL(ctx context.Context, tx pgx.Tx) (allow, deny, bootstrap []string, e
 			return nil, nil, nil, err
 		}
 		if kind == "deny" {
-			deny = append(deny, c)
-		} else {
+			if denyOn {
+				deny = append(deny, c)
+			}
+		} else if allowOn {
 			allow = append(allow, c)
 		}
 	}
