@@ -382,7 +382,8 @@ audit_role() {
 }
 
 role_line() {
-  local r=$1 dir="/opt/dnsmarty-${r}" mark="$D" word="" p=""
+  local r=$1
+  local dir="/opt/dnsmarty-${r}" mark="$D" word="" p=""
   if role_installed "$r" && compose_running "$dir"; then
     mark="$GRN"
     word="$(say "running" "работает")"

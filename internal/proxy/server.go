@@ -96,8 +96,8 @@ type Server struct {
 	aclMu   sync.Mutex
 	aclSeen map[string]time.Time
 
-	resMu  sync.Mutex
-	res    *lru.Cache[string, resolved]
+	resMu sync.Mutex
+	res   *lru.Cache[string, resolved]
 
 	transport *http.Transport
 }

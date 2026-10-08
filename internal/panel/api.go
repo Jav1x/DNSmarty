@@ -576,7 +576,7 @@ func seriesStep(window time.Duration) time.Duration {
 	switch {
 	case window <= time.Hour:
 		return time.Minute
-	case window <= 6 * time.Hour:
+	case window <= 6*time.Hour:
 		return 5 * time.Minute
 	default:
 		return 15 * time.Minute
