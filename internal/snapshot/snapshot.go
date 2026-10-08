@@ -20,6 +20,7 @@ type DNS struct {
 	PullIntervalSec int      `json:"pull_interval_sec"`
 	Bootstrap       []string `json:"bootstrap"`
 	Allow           []string `json:"allow"`
+	Deny            []string `json:"deny"`
 	Upstreams       []string `json:"upstreams"`
 	Domains         []Domain `json:"domains"`
 }
@@ -61,6 +62,9 @@ func EmptySlicesDNS(s *DNS) {
 	}
 	if s.Allow == nil {
 		s.Allow = []string{}
+	}
+	if s.Deny == nil {
+		s.Deny = []string{}
 	}
 	if s.Upstreams == nil {
 		s.Upstreams = []string{}

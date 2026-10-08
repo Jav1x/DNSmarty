@@ -12,7 +12,7 @@ One Go image (`panel`, `dns`, `proxy`, `migrate`) and a React UI. No third-party
 - DNS on 53, DoT on 853, and DoH on 8443 share one decision path.
 - SNI proxy splices TCP and does not terminate TLS. No UDP or QUIC.
 - Several proxies, dropped from rotation when the panel cannot reach them for 30 seconds.
-- Clients outside the allowlist get `REFUSED`. An empty allowlist refuses everyone except the bootstrap CIDR.
+- Clients outside a whitelist get `REFUSED` once a whitelist exists. An empty whitelist allows every client. A blacklist always refuses. The bootstrap CIDR stays allowed.
 - Node keys are shown once and stored only as ciphertext.
 
 ## Requirements
@@ -63,7 +63,7 @@ Files live in `/opt/dnsmarty-dns` or `/opt/dnsmarty-proxy`. `dnsmarty-node updat
 
 ## Clients and names
 
-Add the CIDR you will test from. An empty list refuses everyone except the bootstrap CIDR.
+DNS answers everyone until you add a whitelist. A whitelist limits queries to those networks. A blacklist always refuses. The bootstrap CIDR stays allowed.
 
 Set an upstream recursive resolver, for example `1.1.1.1:53`. DNS and the proxy query it directly, not through their own port 53.
 
@@ -75,7 +75,7 @@ From an allowed address:
 dig @DNS_PUBLIC_IPV4 www.example.com A
 ```
 
-The A record is the live proxy's public address, TTL 30 by default. Unknown names are forwarded. Other clients get `REFUSED` on 53, DoT, and DoH.
+The A record is the live proxy's public address, TTL 30 by default. Unknown names are forwarded. Clients on the blacklist, or outside a non-empty whitelist, get `REFUSED` on 53, DoT, and DoH.
 
 If the panel cannot reach a proxy for 30 seconds, that IP leaves the next DNS snapshot. The name is not forwarded upstream. If the panel is down, the agent keeps the last snapshot.
 

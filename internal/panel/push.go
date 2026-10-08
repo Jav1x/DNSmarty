@@ -2,7 +2,6 @@ package panel
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"dnsmarty/internal/agent"
@@ -116,10 +115,4 @@ func (s *Server) storeStats(ctx context.Context, n store.Node, stats agent.Stats
 		})
 	}
 	return s.store.InsertSessions(ctx, n.ID, sessions)
-}
-
-func (s *Server) logPush(node string, err error) {
-	if err != nil {
-		slog.Warn("push", "node", node, "err", err)
-	}
 }

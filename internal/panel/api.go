@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -158,7 +157,12 @@ func (s *Server) domains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nodes, _ := s.store.ListNodes(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"domains": rows, "proxies": proxyOnly(nodes)})
+	groups, err := s.store.ListGroups(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Список доменов не прочитан.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"domains": rows, "proxies": proxyOnly(nodes), "groups": groups})
 }
 
 func (s *Server) domainsCreate(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +200,32 @@ func (s *Server) domainsDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) groupsCreate(w http.ResponseWriter, r *http.Request) {
+	sess, _ := sessionUser(r, s.store)
+	var body struct {
+		Name    string `json:"name"`
+		Comment string `json:"comment"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	id, err := s.store.CreateGroup(r.Context(), sess.Username, body.Name, body.Comment)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, human(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+func (s *Server) groupsDelete(w http.ResponseWriter, r *http.Request) {
+	sess, _ := sessionUser(r, s.store)
+	if err := s.store.DeleteGroup(r.Context(), sess.Username, r.PathValue("id")); err != nil {
+		writeErr(w, http.StatusBadRequest, human(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.ListClients(r.Context())
 	if err != nil {
@@ -210,12 +240,13 @@ func (s *Server) clientsCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		CIDR    string `json:"cidr"`
 		Label   string `json:"label"`
+		Kind    string `json:"list_kind"`
 		Enabled bool   `json:"enabled"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if err := s.store.CreateClient(r.Context(), sess.Username, body.CIDR, body.Label, body.Enabled); err != nil {
+	if err := s.store.CreateClient(r.Context(), sess.Username, body.CIDR, body.Label, body.Kind, body.Enabled); err != nil {
 		writeErr(w, http.StatusBadRequest, human(err))
 		return
 	}
@@ -227,12 +258,13 @@ func (s *Server) clientsUpdate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		CIDR    string `json:"cidr"`
 		Label   string `json:"label"`
+		Kind    string `json:"list_kind"`
 		Enabled bool   `json:"enabled"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if err := s.store.UpdateClient(r.Context(), sess.Username, r.PathValue("id"), body.CIDR, body.Label, body.Enabled); err != nil {
+	if err := s.store.UpdateClient(r.Context(), sess.Username, r.PathValue("id"), body.CIDR, body.Label, body.Kind, body.Enabled); err != nil {
 		writeErr(w, http.StatusBadRequest, human(err))
 		return
 	}
@@ -377,12 +409,4 @@ func proxyOnly(rows []store.Node) []nodeView {
 		}
 	}
 	return out
-}
-
-func atoi(s string) int {
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return 0
-	}
-	return n
 }

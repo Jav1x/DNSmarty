@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { NavLink, Navigate, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import { ApiError, api } from "./api";
 import { LangSwitch, useI18n } from "./i18n";
@@ -68,17 +68,17 @@ function Shell({ user, onOut }) {
     onOut();
   }
   return (
-    <div className="rack">
-      <header className="mast">
-        <div className="brand"><b>DNSmarty</b><span>control plane</span></div>
+    <div className="app">
+      <aside className="side">
+        <div className="brand"><b>DNSmarty</b><span>DNS</span></div>
         <nav>
           {nav.map(([to, key]) => (
             <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => (isActive ? "on" : "")}>{t(key)}</NavLink>
           ))}
         </nav>
         <div className="who"><LangSwitch /><span>{user}</span><button className="ghost" onClick={logout}>{t("logout")}</button></div>
-      </header>
-      <Outlet />
+      </aside>
+      <main className="main"><Outlet /></main>
     </div>
   );
 }
@@ -111,7 +111,6 @@ function Overview() {
   const { data, error } = useLoad("/api/overview");
   if (!data) return error ? <Err text={error} /> : null;
   const o = data.overview;
-  const cols = o.bay_proxies?.length || 0;
   return (
     <>
       <section className="meters">
@@ -119,30 +118,12 @@ function Overview() {
         <div className="meter"><i>{t("sessions60")}</i><b>{o.sessions}</b></div>
         <div className="meter"><i>{t("bytes24")}</i><b>{formatBytes(o.bytes)}</b></div>
         <div className="meter"><i>{t("acl60")}</i><b>{o.refused}</b></div>
-        <div className="meter"><i>Stale</i><b>{o.stale}</b></div>
-      </section>
-      <section className="bay" style={{ "--n": cols }}>
-        <h2>{t("patch")}</h2>
-        {o.rows?.length ? (
-          <>
-            <div className="bay-grid">
-              <div className="bay-head"><span>{t("domain")}</span>{o.bay_proxies.map((p) => <span key={p.id}>{p.name}</span>)}</div>
-              {o.rows.map((row) => (
-                <div className="bay-row" key={row.name}>
-                  <div className="dname">{row.name} <span className="empty">{balanceLabel(row.balance, t)}</span></div>
-                  {(row.cells || []).map((cell, i) => <div className="cell" key={i}><span className={`jack ${cell.state}`} /></div>)}
-                </div>
-              ))}
-            </div>
-            <div className="legend"><span><i className="live" />{t("legendLive")}</span><span><i className="dead" />{t("legendDead")}</span><span><i className="empty" />{t("legendEmpty")}</span></div>
-          </>
-        ) : <p className="empty">{t("noDomains")}</p>}
+        <div className="meter"><i>{t("domains")}</i><b>{o.rows?.length || 0}</b></div>
       </section>
       <section className="mod">
         <h2>{t("nodeCol")}</h2>
         <NodeTable nodes={data.nodes} />
       </section>
-      <p className="banner note">{t("noUdp")}</p>
       <Err text={error} />
     </>
   );
@@ -171,80 +152,98 @@ function NodeTable({ nodes }) {
 function Nodes() {
   const { t, err } = useI18n();
   const { data, error, setError, reload } = useLoad("/api/nodes");
-  const [step, setStep] = useState(0);
-  const [created, setCreated] = useState(null);
-  const [connect, setConnect] = useState(null);
-  async function create(event) {
-    event.preventDefault();
-    const form = new FormData(event.target);
-    try {
-      const out = await api("/api/nodes", { method: "POST", body: JSON.stringify(nodeBody(form)) });
-      setCreated(out);
-      setStep(2);
-      setConnect(null);
-      reload();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-  async function next() {
-    const out = await api(`/api/nodes/${created.node.id}/connect`, { method: "POST" });
-    setConnect(out);
-    setStep(3);
-    reload();
-  }
+  const [open, setOpen] = useState(null);
+  const nodes = data || [];
+  const editing = open?.mode === "edit" ? nodes.find((n) => n.id === open.node.id) || open.node : null;
   return (
     <>
       <Err text={error} />
-      <section className="mod">
-        <h2>{t("newNode")}</h2>
-        <div className="steps"><span className={step < 2 ? "on" : ""}>{t("stepAddr")}</span><span className={step === 2 ? "on" : ""}>{t("stepKey")}</span><span className={step === 3 ? "on" : ""}>{t("stepLink")}</span></div>
-        {step < 2 && (
-          <form onSubmit={create}>
-            <div className="grid">
-              <div><label>{t("name")}</label><input name="name" required /></div>
-              <div><label>{t("role")}</label><select name="role"><option value="dns">dns</option><option value="proxy">proxy</option></select></div>
-              <div><label>{t("ipv4")}</label><input name="public_ipv4" placeholder="203.0.113.10" /></div>
-              <div><label>{t("ipv6")}</label><input name="public_ipv6" /></div>
-              <div><label>{t("region")}</label><input name="region" /></div>
-              <div><label>{t("agentHost")}</label><input name="agent_host" placeholder="203.0.113.10" required /></div>
-              <div><label>{t("agentPort")}</label><input name="agent_port" defaultValue="9443" required /></div>
-              <div><label>{t("inRotation")}</label><label className="check"><input type="checkbox" name="enabled" defaultChecked />{t("enabled")}</label></div>
-            </div>
-            <p className="empty">{t("nodeHint")}</p>
-            <p><button type="submit">{t("issueKey")}</button></p>
-          </form>
-        )}
-        {step === 2 && created && (
-          <div>
-            <p>{t("keyOnce", { name: created.node.name })}</p>
-            <p className="token">{created.key}</p>
-            <p className="empty">{t("scriptHint", { port: created.node.agent_port })}</p>
-            <pre className="banner note">{`DNSMARTY_IMAGE=${created.image || "dnsmarty:local"} sh install-node.sh ${created.node.role}`}</pre>
-            <p><a href="/install/node.sh">{t("downloadScript")}</a></p>
-            <div className="row-actions">
-              <button onClick={next}>{t("next")}</button>
-              <button className="ghost" onClick={() => setStep(0)}>{t("anotherNode")}</button>
-            </div>
-          </div>
-        )}
-        {step === 3 && connect && (
-          <div>
-            {connect.ok
-              ? <div className="banner ok">{t("linked")}</div>
-              : <div className="banner err">{t("notLinked", { error: err(connect.error) })}</div>}
-            <button onClick={() => { setStep(0); setCreated(null); }}>{t("close")}</button>
-          </div>
-        )}
+      <section className="sheet">
+        <div className="toolbar">
+          <h2>{t("nodes")}</h2>
+          <button type="button" onClick={() => setOpen({ mode: "new" })}>{t("newNode")}</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>{t("name")}</th>
+              <th>{t("role")}</th>
+              <th>{t("publicIp")}</th>
+              <th>{t("agent")}</th>
+              <th>{t("state")}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {nodes.length ? nodes.map((n) => (
+              <tr key={n.id}>
+                <td><span className={`lamp ${n.fresh ? "on" : "off"}`} />{n.name}</td>
+                <td>{n.role}</td>
+                <td className="mono">{ipOf(n)}</td>
+                <td className="mono">{n.agent_host}:{n.agent_port}</td>
+                <td>{n.last_error ? err(n.last_error) : (n.fresh ? t("online") : t("offline"))}</td>
+                <td><button type="button" className="ghost tiny" onClick={() => setOpen({ mode: "edit", node: n })}>{t("edit")}</button></td>
+              </tr>
+            )) : <tr><td colSpan="6" className="empty">{t("noNodes")}</td></tr>}
+          </tbody>
+        </table>
       </section>
-      {(data || []).map((n) => <NodeCard key={n.id} node={n} onChange={reload} setError={setError} />)}
+      {open && (
+        <NodeModal
+          mode={open.mode}
+          node={editing}
+          onClose={() => setOpen(null)}
+          onChange={reload}
+          setError={setError}
+        />
+      )}
     </>
   );
 }
 
-function NodeCard({ node, onChange, setError }) {
+function NodeModal({ mode, node, onClose, onChange, setError }) {
   const { t, err } = useI18n();
+  const [step, setStep] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState(null);
+  const [connect, setConnect] = useState(null);
+  const [copied, setCopied] = useState("");
   const [msg, setMsg] = useState("");
+  useEffect(() => {
+    function onKey(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  async function copyText(label, text) {
+    await navigator.clipboard.writeText(text);
+    setCopied(label);
+  }
+  async function create(event) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const out = await api("/api/nodes", { method: "POST", body: JSON.stringify(nodeBody(new FormData(event.target))) });
+      setCreated(out);
+      setConnect(null);
+      setStep(1);
+      onChange();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+  async function checkNew() {
+    if (busy || !created) return;
+    setBusy(true);
+    try {
+      const out = await api(`/api/nodes/${created.node.id}/connect`, { method: "POST" });
+      setConnect(out);
+      setStep(2);
+      onChange();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
   async function save(event) {
     event.preventDefault();
     try {
@@ -253,75 +252,256 @@ function NodeCard({ node, onChange, setError }) {
       onChange();
     } catch (e) { setError(e.message); }
   }
-  async function connect() {
-    const out = await api(`/api/nodes/${node.id}/connect`, { method: "POST" });
-    setMsg(out.ok ? t("linkedShort") : err(out.error));
-    onChange();
+  async function check() {
+    try {
+      const out = await api(`/api/nodes/${node.id}/connect`, { method: "POST" });
+      setMsg(out.ok ? t("linkedShort") : err(out.error));
+      onChange();
+    } catch (e) { setError(e.message); }
   }
   async function rotate() {
-    const out = await api(`/api/nodes/${node.id}/key`, { method: "POST" });
-    setMsg(t("newKeyOnce", { key: out.key }));
+    if (!window.confirm(t("confirmRotate", { name: node.name }))) return;
+    try {
+      const out = await api(`/api/nodes/${node.id}/key`, { method: "POST" });
+      setMsg(t("newKeyOnce", { key: out.key }));
+    } catch (e) { setError(e.message); }
   }
   async function remove() {
-    await api(`/api/nodes/${node.id}`, { method: "DELETE" });
-    onChange();
+    if (!window.confirm(t("confirmDelete", { name: node.name }))) return;
+    try {
+      await api(`/api/nodes/${node.id}`, { method: "DELETE" });
+      onChange();
+      onClose();
+    } catch (e) { setError(e.message); }
   }
+  const title = mode === "new" ? t("newNode") : node?.name;
+  const install = created
+    ? `dnsmarty-node install --role ${created.node.role} --key ${created.key} --port ${created.node.agent_port}`
+    : "";
   return (
-    <section className="mod">
-      <h2>{node.name}</h2>
-      {msg && <div className="banner note">{msg}</div>}
-      <form onSubmit={save}>
-        <div className="grid">
-          <div><label>{t("name")}</label><input name="name" defaultValue={node.name} required /></div>
-          <div><label>{t("role")}</label><select name="role" defaultValue={node.role}><option value="dns">dns</option><option value="proxy">proxy</option></select></div>
-          <div><label>{t("ipv4")}</label><input name="public_ipv4" defaultValue={node.public_ipv4} /></div>
-          <div><label>{t("ipv6")}</label><input name="public_ipv6" defaultValue={node.public_ipv6} /></div>
-          <div><label>{t("region")}</label><input name="region" defaultValue={node.region} /></div>
-          <div><label>{t("agentHost")}</label><input name="agent_host" defaultValue={node.agent_host} required /></div>
-          <div><label>{t("agentPort")}</label><input name="agent_port" defaultValue={node.agent_port} required /></div>
-          <div><label>{t("inRotation")}</label><label className="check"><input type="checkbox" name="enabled" defaultChecked={node.enabled} />{t("enabled")}</label></div>
+    <div className="modal-back" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="modal-head">
+          <h2>{title}</h2>
+          <button type="button" className="ghost tiny" onClick={onClose}>{t("close")}</button>
         </div>
-        <p className="empty"><span className={`lamp ${node.fresh ? "on" : "off"}`} />{node.fresh ? t("online") : t("offline")}{node.last_error ? ` · ${err(node.last_error)}` : ""}</p>
-        <div className="row-actions"><button type="submit">{t("save")}</button></div>
-      </form>
-      <div className="row-actions">
-        <button className="ghost" onClick={connect}>{t("checkLink")}</button>
-        <button className="ghost" onClick={rotate}>{t("newKey")}</button>
-        <button className="alarm" onClick={remove}>{t("deleteName", { name: node.name })}</button>
+        {mode === "new" && (
+          <div className="stepper">
+            {[t("stepAddr"), t("stepKey"), t("stepLink")].map((label, i) => (
+              <Fragment key={label}>
+                {i > 0 && <span className={i <= step ? "step-line on" : "step-line"} />}
+                <span className={i === step ? "step on" : i < step ? "step done" : "step"}><b>{i < step ? "✓" : i + 1}</b>{label}</span>
+              </Fragment>
+            ))}
+          </div>
+        )}
+        {mode === "new" && step === 0 && (
+          <form onSubmit={create}>
+            <NodeFields />
+            <p className="empty">{t("nodeHint")}</p>
+            <div className="modal-foot">
+              <button type="button" className="ghost" onClick={onClose}>{t("back")}</button>
+              <button type="submit" disabled={busy}>{t("next")}</button>
+            </div>
+          </form>
+        )}
+        {mode === "new" && step === 1 && created && (
+          <div>
+            <p>{t("keyOnce", { name: created.node.name })}</p>
+            <div className="copy-box">
+              <p className="token">{created.key}</p>
+              <button type="button" className="ghost tiny" onClick={() => copyText("key", created.key)}>{copied === "key" ? t("copied") : t("copy")}</button>
+            </div>
+            <p className="empty">{t("scriptHint", { port: created.node.agent_port })}</p>
+            <div className="copy-box">
+              <pre className="banner note">{install}</pre>
+              <button type="button" className="ghost tiny" onClick={() => copyText("cmd", install)}>{copied === "cmd" ? t("copied") : t("copy")}</button>
+            </div>
+            <p><a href="/install/node.sh">{t("downloadScript")}</a></p>
+            <div className="modal-foot">
+              <button type="button" onClick={checkNew} disabled={busy}>{t("next")}</button>
+            </div>
+          </div>
+        )}
+        {mode === "new" && step === 2 && connect && (
+          <div>
+            {connect.ok
+              ? <div className="banner ok">{t("linked")}</div>
+              : <div className="banner err">{t("notLinked", { error: err(connect.error) })}</div>}
+            <div className="modal-foot">
+              {!connect.ok && <button type="button" className="ghost" onClick={checkNew} disabled={busy}>{t("checkLink")}</button>}
+              <button type="button" onClick={onClose}>{t("close")}</button>
+            </div>
+          </div>
+        )}
+        {mode === "edit" && node && (
+          <>
+            {msg && <div className="banner note">{msg}</div>}
+            <form onSubmit={save}>
+              <NodeFields node={node} />
+              <p className="empty"><span className={`lamp ${node.fresh ? "on" : "off"}`} />{node.fresh ? t("online") : t("offline")}{node.last_error ? ` · ${err(node.last_error)}` : ""}</p>
+              <div className="row-actions">
+                <button type="submit">{t("save")}</button>
+                <button type="button" className="ghost" onClick={check}>{t("checkLink")}</button>
+                <button type="button" className="ghost" onClick={rotate}>{t("newKey")}</button>
+                <button type="button" className="alarm" onClick={remove}>{t("delete")}</button>
+              </div>
+            </form>
+          </>
+        )}
       </div>
-    </section>
+    </div>
   );
 }
+
+function NodeFields({ node }) {
+  const { t } = useI18n();
+  return (
+    <div className="grid">
+      <div><label>{t("name")}</label><input name="name" defaultValue={node?.name} required /></div>
+      <div><label>{t("role")}</label><select name="role" defaultValue={node?.role || "dns"}><option value="dns">dns</option><option value="proxy">proxy</option></select></div>
+      <div><label>{t("ipv4")}</label><input name="public_ipv4" defaultValue={node?.public_ipv4} placeholder="203.0.113.10" /></div>
+      <div><label>{t("ipv6")}</label><input name="public_ipv6" defaultValue={node?.public_ipv6} /></div>
+      <div><label>{t("region")}</label><input name="region" defaultValue={node?.region} /></div>
+      <div><label>{t("agentHost")}</label><input name="agent_host" defaultValue={node?.agent_host} placeholder="203.0.113.10" required /></div>
+      <div><label>{t("agentPort")}</label><input name="agent_port" defaultValue={node?.agent_port || (node?.role === "proxy" ? "9444" : "9443")} required /></div>
+      <div><label>{t("inRotation")}</label><label className="check"><input type="checkbox" name="enabled" defaultChecked={node ? node.enabled : true} />{t("enabled")}</label></div>
+    </div>
+  );
+}
+
+const pageSize = 40;
 
 function Domains() {
   const { t } = useI18n();
   const { data, error, setError, reload } = useLoad("/api/domains");
+  const [group, setGroup] = useState("all");
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  const [editing, setEditing] = useState(null);
   if (!data) return error ? <Err text={error} /> : null;
+  const groups = data.groups || [];
+  const domains = data.domains || [];
+  const query = q.trim().toLowerCase();
+  const filtered = domains.filter((d) => {
+    if (group === "none" && d.group_id) return false;
+    if (group !== "all" && group !== "none" && d.group_id !== group) return false;
+    if (!query) return true;
+    return d.name.toLowerCase().includes(query) || (d.comment || "").toLowerCase().includes(query);
+  });
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const current = Math.min(page, pages - 1);
+  const slice = filtered.slice(current * pageSize, current * pageSize + pageSize);
+  const ungrouped = domains.filter((d) => !d.group_id).length;
+  async function createGroup(event) {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    try {
+      const out = await api("/api/groups", { method: "POST", body: JSON.stringify({ name: form.get("name") }) });
+      event.target.reset();
+      setGroup(out.id);
+      setPage(0);
+      reload();
+    } catch (err) { setError(err.message); }
+  }
+  async function assignGroup(domain, groupID) {
+    try {
+      await api(`/api/domains/${domain.id}`, { method: "POST", body: JSON.stringify(domainPayload(domain, groupID)) });
+      reload();
+    } catch (err) { setError(err.message); }
+  }
   async function create(event) {
     event.preventDefault();
     try {
       await api("/api/domains", { method: "POST", body: JSON.stringify(domainBody(new FormData(event.target), data.proxies)) });
       event.target.reset();
+      setEditing(null);
+      reload();
+    } catch (err) { setError(err.message); }
+  }
+  async function removeGroup(g) {
+    if (!window.confirm(t("confirmDelete", { name: g.name }))) return;
+    try {
+      await api(`/api/groups/${g.id}`, { method: "DELETE" });
+      if (group === g.id) setGroup("all");
       reload();
     } catch (err) { setError(err.message); }
   }
   return (
     <>
       <Err text={error} />
-      <section className="mod">
-        <h2>{t("newDomain")}</h2>
-        <p className="empty">{t("seedHint")}</p>
-        <form onSubmit={create}>
-          <DomainFields proxies={data.proxies} />
-          <p><button type="submit">{t("add")}</button></p>
-        </form>
-      </section>
-      {data.domains.map((d) => <DomainCard key={d.id} domain={d} onChange={reload} setError={setError} />)}
+      <div className="domains">
+        <aside className="groups">
+          <button type="button" className={group === "all" ? "group-item on" : "group-item"} onClick={() => { setGroup("all"); setPage(0); }}>
+            {t("allGroups")}<span>{domains.length}</span>
+          </button>
+          <button type="button" className={group === "none" ? "group-item on" : "group-item"} onClick={() => { setGroup("none"); setPage(0); }}>
+            {t("ungrouped")}<span>{ungrouped}</span>
+          </button>
+          {groups.map((g) => (
+            <div className="group-head" key={g.id}>
+              <button type="button" className={group === g.id ? "group-item on" : "group-item"} onClick={() => { setGroup(g.id); setPage(0); }}>
+                {g.name}<span>{g.count}</span>
+              </button>
+              <button type="button" className="ghost tiny" onClick={() => removeGroup(g)}>{t("delete")}</button>
+            </div>
+          ))}
+          <form className="group-add" onSubmit={createGroup}>
+            <input name="name" placeholder={t("groupName")} required />
+            <button type="submit" className="tiny">{t("add")}</button>
+          </form>
+        </aside>
+        <section className="sheet">
+          <div className="toolbar">
+            <input value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder={t("searchDomains")} />
+            <button type="button" onClick={() => setEditing(editing === "new" ? null : "new")}>{t("newDomain")}</button>
+          </div>
+          {editing === "new" && (
+            <form onSubmit={create}>
+              <DomainFields proxies={data.proxies} groups={groups} groupID={group !== "all" && group !== "none" ? group : ""} />
+              <p><button type="submit">{t("add")}</button></p>
+            </form>
+          )}
+          {editing && editing !== "new" && (
+            <DomainCard key={editing.id} domain={editing} groups={groups} onChange={() => { setEditing(null); reload(); }} setError={setError} />
+          )}
+          <table>
+            <thead>
+              <tr><th>{t("name")}</th><th>{t("groups")}</th><th>{t("match")}</th><th>{t("strategy")}</th><th></th></tr>
+            </thead>
+            <tbody>
+              {slice.map((d) => (
+                <tr key={d.id}>
+                  <td className="mono"><span className={d.enabled ? "lamp on" : "lamp off"} />{d.name}</td>
+                  <td>
+                    <select value={d.group_id || ""} onChange={(e) => assignGroup(d, e.target.value)}>
+                      <option value="">{t("ungrouped")}</option>
+                      {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </td>
+                  <td>{d.match === "fqdn" ? t("fqdn") : t("suffix")}</td>
+                  <td>{balanceLabel(d.balance, t)}</td>
+                  <td>
+                    <button type="button" className="ghost tiny" onClick={() => setEditing(d)}>{t("edit")}</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!filtered.length && <p className="empty">{t("noDomains")}</p>}
+          <div className="pager">
+            <span>{t("domainCount", { n: filtered.length })}</span>
+            <button type="button" className="ghost tiny" disabled={current === 0} onClick={() => setPage(current - 1)}>{t("prev")}</button>
+            <span>{current + 1} {t("of")} {pages}</span>
+            <button type="button" className="ghost tiny" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>{t("nextPage")}</button>
+          </div>
+        </section>
+      </div>
     </>
   );
 }
 
-function DomainFields({ proxies, domain }) {
+function DomainFields({ proxies, domain, groups, groupID }) {
   const { t } = useI18n();
   const weights = domain?.weights || proxies.map((p) => ({ proxy_id: p.id, proxy_name: p.name, weight: 1, on: false }));
   return (
@@ -330,6 +510,9 @@ function DomainFields({ proxies, domain }) {
         <div><label>{t("name")}</label><input name="name" defaultValue={domain?.name} placeholder="example.com" required /></div>
         <div><label>{t("match")}</label><select name="match" defaultValue={domain?.match || "suffix"}><option value="suffix">{t("suffix")}</option><option value="fqdn">{t("fqdn")}</option></select></div>
         <div><label>{t("strategy")}</label><select name="balance" defaultValue={domain?.balance || "round_robin"}><option value="round_robin">{t("rr")}</option><option value="weighted">{t("weighted")}</option><option value="sticky24">{t("sticky")}</option></select></div>
+        <div><label>{t("groups")}</label><select name="group_id" defaultValue={domain?.group_id || groupID || ""}><option value="">{t("ungrouped")}</option>{(groups || []).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
+      </div>
+      <div className="grid">
         <div><label>{t("comment")}</label><input name="comment" defaultValue={domain?.comment} /></div>
       </div>
       <p><label className="check"><input type="checkbox" name="enabled" defaultChecked={domain ? domain.enabled : true} />{t("enabled")}</label></p>
@@ -346,7 +529,7 @@ function DomainFields({ proxies, domain }) {
   );
 }
 
-function DomainCard({ domain, onChange, setError }) {
+function DomainCard({ domain, groups, onChange, setError }) {
   const { t } = useI18n();
   async function save(event) {
     event.preventDefault();
@@ -355,65 +538,75 @@ function DomainCard({ domain, onChange, setError }) {
       onChange();
     } catch (err) { setError(err.message); }
   }
+  async function remove() {
+    if (!window.confirm(t("confirmDelete", { name: domain.name }))) return;
+    try {
+      await api(`/api/domains/${domain.id}`, { method: "DELETE" });
+      onChange();
+    } catch (err) { setError(err.message); }
+  }
   return (
-    <section className="mod">
-      <h2>{domain.name}</h2>
-      <form onSubmit={save}>
-        <DomainFields domain={domain} proxies={[]} />
-        <p><button type="submit">{t("save")}</button></p>
-      </form>
-      <button className="alarm" onClick={async () => { await api(`/api/domains/${domain.id}`, { method: "DELETE" }); onChange(); }}>{t("deleteName", { name: domain.name })}</button>
-    </section>
+    <form onSubmit={save}>
+      <DomainFields domain={domain} proxies={[]} groups={groups} />
+      <div className="row-actions">
+        <button type="submit">{t("save")}</button>
+        <button type="button" className="alarm" onClick={remove}>{t("delete")}</button>
+      </div>
+    </form>
   );
 }
 
 function Clients() {
   const { t } = useI18n();
   const { data, error, setError, reload } = useLoad("/api/clients");
-  async function create(event) {
+  async function create(kind, event) {
     event.preventDefault();
     const form = new FormData(event.target);
     try {
-      await api("/api/clients", { method: "POST", body: JSON.stringify({ cidr: form.get("cidr"), label: form.get("label"), enabled: form.get("enabled") === "on" }) });
+      await api("/api/clients", { method: "POST", body: JSON.stringify({ cidr: form.get("cidr"), label: form.get("label"), list_kind: kind, enabled: form.get("enabled") === "on" }) });
       event.target.reset();
       reload();
     } catch (err) { setError(err.message); }
   }
+  async function remove(c) {
+    if (!window.confirm(t("confirmDelete", { name: c.cidr }))) return;
+    try {
+      await api(`/api/clients/${c.id}`, { method: "DELETE" });
+      reload();
+    } catch (err) { setError(err.message); }
+  }
+  const rows = data || [];
   return (
     <>
       <Err text={error} />
-      <section className="mod">
-        <h2>{t("allowNet")}</h2>
-        <p className="empty">{t("allowHint")}</p>
-        <form onSubmit={create}>
-          <div className="grid">
-            <div><label>CIDR</label><input name="cidr" placeholder="198.51.100.10/32" required /></div>
-            <div><label>{t("label")}</label><input name="label" /></div>
-            <div><label>{t("state")}</label><label className="check"><input type="checkbox" name="enabled" defaultChecked />{t("enabledFem")}</label></div>
-          </div>
-          <p><button type="submit">{t("add")}</button></p>
-        </form>
-      </section>
-      {(data || []).map((c) => (
-        <section className="mod" key={c.id}>
-          <form onSubmit={async (event) => {
-            event.preventDefault();
-            const form = new FormData(event.target);
-            try {
-              await api(`/api/clients/${c.id}`, { method: "POST", body: JSON.stringify({ cidr: form.get("cidr"), label: form.get("label"), enabled: form.get("enabled") === "on" }) });
-              reload();
-            } catch (err) { setError(err.message); }
-          }}>
-            <div className="grid">
-              <div><label>CIDR</label><input name="cidr" defaultValue={c.cidr} required /></div>
-              <div><label>{t("label")}</label><input name="label" defaultValue={c.label} /></div>
-              <div><label>{t("state")}</label><label className="check"><input type="checkbox" name="enabled" defaultChecked={c.enabled} />{t("enabledFem")}</label></div>
-            </div>
-            <div className="row-actions"><button type="submit">{t("save")}</button></div>
-          </form>
-          <button className="alarm" onClick={async () => { await api(`/api/clients/${c.id}`, { method: "DELETE" }); reload(); }}>{t("delete")}</button>
-        </section>
-      ))}
+      <p className="empty">{t("allowHint")}</p>
+      <div className="clients">
+        {["allow", "deny"].map((kind) => (
+          <section className="mod" key={kind}>
+            <h2>{kind === "allow" ? t("whitelist") : t("blacklist")}</h2>
+            <form onSubmit={(event) => create(kind, event)}>
+              <div className="grid">
+                <div><label>CIDR</label><input name="cidr" placeholder="198.51.100.10/32" required /></div>
+                <div><label>{t("label")}</label><input name="label" /></div>
+              </div>
+              <p><label className="check"><input type="checkbox" name="enabled" defaultChecked />{t("enabledFem")}</label></p>
+              <p><button type="submit">{t("add")}</button></p>
+            </form>
+            <table>
+              <tbody>
+                {rows.filter((c) => (c.list_kind || "allow") === kind).map((c) => (
+                  <tr key={c.id}>
+                    <td className="mono">{c.cidr}</td>
+                    <td>{c.label}</td>
+                    <td><span className={c.enabled ? "lamp on" : "lamp off"} /></td>
+                    <td><button type="button" className="ghost tiny" onClick={() => remove(c)}>{t("delete")}</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        ))}
+      </div>
     </>
   );
 }
@@ -422,13 +615,20 @@ function Logs() {
   const { t } = useI18n();
   const [q, setQ] = useState("");
   const [ip, setIp] = useState("");
-  const { data, error, reload } = useLoad(`/api/logs?q=${encodeURIComponent(q)}&ip=${encodeURIComponent(ip)}`);
+  const [applied, setApplied] = useState({ q: "", ip: "" });
+  const { data, error, reload } = useLoad(`/api/logs?q=${encodeURIComponent(applied.q)}&ip=${encodeURIComponent(applied.ip)}`);
+  function submit(event) {
+    event.preventDefault();
+    const next = { q: q.trim(), ip: ip.trim() };
+    if (next.q === applied.q && next.ip === applied.ip) reload();
+    else setApplied(next);
+  }
   return (
     <>
       <Err text={error} />
       <section className="mod">
         <h2>{t("filter")}</h2>
-        <form onSubmit={(e) => { e.preventDefault(); reload(); }}>
+        <form onSubmit={submit}>
           <div className="grid">
             <div><label>{t("name")}</label><input value={q} onChange={(e) => setQ(e.target.value)} /></div>
             <div><label>{t("clientIp")}</label><input value={ip} onChange={(e) => setIp(e.target.value)} placeholder={t("ipPlaceholder")} /></div>
@@ -519,7 +719,13 @@ function Settings() {
             </div>
             <div className="row-actions">
               <button type="submit">{t("save")}</button>
-              <button className="alarm" type="button" onClick={async () => { await api(`/api/upstreams/${u.id}`, { method: "DELETE" }); reload(); }}>{t("delete")}</button>
+              <button className="alarm" type="button" onClick={async () => {
+                if (!window.confirm(t("confirmDelete", { name: u.addr }))) return;
+                try {
+                  await api(`/api/upstreams/${u.id}`, { method: "DELETE" });
+                  reload();
+                } catch (err) { setError(err.message); }
+              }}>{t("delete")}</button>
             </div>
           </form>
         ))}
@@ -556,6 +762,18 @@ function nodeBody(form) {
   };
 }
 
+function domainPayload(domain, groupID) {
+  return {
+    name: domain.name,
+    match: domain.match,
+    balance: domain.balance,
+    comment: domain.comment || "",
+    enabled: domain.enabled,
+    group_id: groupID,
+    links: (domain.weights || []).filter((w) => w.on).map((w) => ({ proxy_id: w.proxy_id, weight: w.weight })),
+  };
+}
+
 function domainBody(form, proxies) {
   const links = [];
   for (const p of proxies) {
@@ -570,6 +788,7 @@ function domainBody(form, proxies) {
     balance: form.get("balance"),
     comment: form.get("comment") || "",
     enabled: form.get("enabled") === "on",
+    group_id: form.get("group_id") || "",
     links,
   };
 }

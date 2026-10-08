@@ -55,12 +55,16 @@ func Decide(snap *snapshot.DNS, client net.IP, qname string, qtype uint16, pick 
 	if err != nil {
 		return Decision{Action: ActionFail, Rcode: mdns.RcodeServerFailure}
 	}
+	deny, err := netx.ParseCIDRs(snap.Deny)
+	if err != nil {
+		return Decision{Action: ActionFail, Rcode: mdns.RcodeServerFailure}
+	}
 	boot, err := netx.ParseCIDRs(snap.Bootstrap)
 	if err != nil {
 		return Decision{Action: ActionFail, Rcode: mdns.RcodeServerFailure}
 	}
 	ttl := snap.TTL
-	if !clientAllowed(client, allow, boot) {
+	if !clientAllowed(client, allow, deny, boot) {
 		return Decision{Action: ActionRefuse, Rcode: mdns.RcodeRefused, TTL: ttl}
 	}
 	name := snapshot.Normalize(qname)
@@ -75,11 +79,17 @@ func Decide(snap *snapshot.DNS, client net.IP, qname string, qtype uint16, pick 
 	return Decision{Action: ActionLocal, Rcode: mdns.RcodeSuccess, IPs: ipsFor(chosen, qtype), TTL: ttl}
 }
 
-func clientAllowed(ip net.IP, allow, boot []net.IPNet) bool {
-	if len(allow) == 0 {
-		return netx.Contains(boot, ip)
+func clientAllowed(ip net.IP, allow, deny, boot []net.IPNet) bool {
+	if netx.Contains(boot, ip) {
+		return true
 	}
-	return netx.Contains(allow, ip) || netx.Contains(boot, ip)
+	if netx.Contains(deny, ip) {
+		return false
+	}
+	if len(allow) == 0 {
+		return true
+	}
+	return netx.Contains(allow, ip)
 }
 
 func mostSpecific(domains []snapshot.Domain, host string) *snapshot.Domain {

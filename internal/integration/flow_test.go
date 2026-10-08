@@ -91,7 +91,7 @@ func TestPostgresDecisions(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE domain SET balance = 'sticky24' WHERE name = 'example.com'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateClient(ctx, "test", "127.0.0.1/32", "local", true); err != nil {
+	if err := st.CreateClient(ctx, "test", "127.0.0.1/32", "local", "allow", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetReachable(ctx, node.ID, 0); err != nil {

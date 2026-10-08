@@ -1,6 +1,10 @@
 .git
+.github
 .env
 certs
 README.md
 compose.overlay.dns.yml
 compose.overlay.proxy.yml
+web/node_modules
+web/dist
+internal/panel/dist/assets

@@ -587,6 +587,7 @@ cmd_install() {
   if [[ "$CHECK_FAIL" -ne 0 ]]; then
     die "$(say "Fix the failed checks before installing." "Исправьте ошибки перед установкой.")"
   fi
+  section "$(say "Setup" "Настройка")"
   if panel_installed; then
     warn "$(say "A panel is already installed in ${APP_DIR}." "Панель уже стоит в ${APP_DIR}.")"
     if confirm "$(say "Update images and restart, keeping .env and Postgres?" "Обновить образы и перезапустить, сохранив .env и Postgres?")" "y"; then
@@ -611,6 +612,11 @@ cmd_install() {
 cmd_update() {
   need_root
   panel_installed || die "$(say "Panel is not installed." "Панель не установлена.")"
+  section "$(say "Checks" "Проверки")"
+  audit_tools
+  echo
+  [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before continuing." "Исправьте ошибки перед продолжением.")"
+  section "$(say "Setup" "Настройка")"
   ensure_docker
   write_compose
   bring_up

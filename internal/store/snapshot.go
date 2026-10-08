@@ -74,15 +74,19 @@ func loadDNSBody(ctx context.Context, tx pgx.Tx) (snapshot.DNS, error) {
 	body.PullIntervalSec = pull
 	body.Bootstrap = splitList(boot)
 
-	rows, err := tx.Query(ctx, `SELECT cidr::text FROM client_cidr WHERE enabled ORDER BY cidr::text`)
+	rows, err := tx.Query(ctx, `SELECT cidr::text, list_kind FROM client_cidr WHERE enabled ORDER BY cidr::text`)
 	if err != nil {
 		return body, err
 	}
 	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
+		var c, kind string
+		if err := rows.Scan(&c, &kind); err != nil {
 			rows.Close()
 			return body, err
+		}
+		if kind == "deny" {
+			body.Deny = append(body.Deny, c)
+			continue
 		}
 		body.Allow = append(body.Allow, c)
 	}

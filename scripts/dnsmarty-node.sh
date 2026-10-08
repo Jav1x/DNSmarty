@@ -282,11 +282,9 @@ check_firewall_port() {
   fi
 }
 
-audit_role() {
-  local data_ours=0 agent_ours=0 dir="" agent="" saved="" code=""
+audit_common() {
+  local code=""
   CHECK_FAIL=0
-  dir="$(app_dir)"
-  agent="${port:-$(default_port)}"
   if [[ "$(uname -s)" == "Linux" ]]; then
     row_ok "Linux $(uname -m)"
   else
@@ -297,22 +295,20 @@ audit_role() {
   else
     row_bad "$(say "curl is missing." "Нет curl.")"
   fi
-  if [[ "$role" == "dns" ]]; then
-    if command -v openssl >/dev/null 2>&1; then
-      row_ok "openssl"
-    else
-      row_bad "$(say "openssl is missing. DoT and DoH need a certificate." "Нет openssl. Для DoT и DoH нужен сертификат.")"
-    fi
+  if command -v openssl >/dev/null 2>&1; then
+    row_ok "openssl"
+  else
+    row_bad "$(say "openssl is missing. DoT and DoH need a certificate." "Нет openssl. Для DoT и DoH нужен сертификат.")"
   fi
   if [[ -d /usr/local/bin && -w /usr/local/bin ]]; then
     row_ok "/usr/local/bin"
   else
     row_bad "$(say "/usr/local/bin is not writable." "/usr/local/bin недоступен для записи.")"
   fi
-  if [[ -d "$dir" && -w "$dir" ]] || [[ ! -d "$dir" && -w /opt ]]; then
-    row_ok "$dir"
+  if [[ -d /opt && -w /opt ]]; then
+    row_ok "/opt"
   else
-    row_bad "$(say "${dir} is not writable." "${dir} недоступен для записи.")"
+    row_bad "$(say "/opt is not writable." "/opt недоступен для записи.")"
   fi
   if command -v docker >/dev/null 2>&1; then
     if docker info >/dev/null 2>&1; then
@@ -328,6 +324,29 @@ audit_role() {
   else
     row_warn "$(say "Docker is not installed yet." "Docker ещё не установлен.")"
   fi
+  if role_installed dns; then
+    row_warn "$(say "DNS agent files are already in /opt/dnsmarty-dns." "Файлы DNS-агента уже есть в /opt/dnsmarty-dns.")"
+  else
+    row_ok "$(say "No DNS agent install." "DNS-агент ещё не установлен.")"
+  fi
+  if role_installed proxy; then
+    row_warn "$(say "Proxy agent files are already in /opt/dnsmarty-proxy." "Файлы прокси уже есть в /opt/dnsmarty-proxy.")"
+  else
+    row_ok "$(say "No proxy agent install." "Прокси ещё не установлен.")"
+  fi
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 https://ghcr.io/v2/ 2>/dev/null || true)
+  if [[ "$code" == "200" || "$code" == "401" ]]; then
+    row_ok "ghcr.io"
+  else
+    row_warn "$(say "ghcr.io did not answer. Image pull may fail." "ghcr.io не ответил. Скачивание образа может не пройти.")"
+  fi
+}
+
+audit_role() {
+  local data_ours=0 agent_ours=0 dir="" agent="" saved=""
+  CHECK_FAIL=0
+  dir="$(app_dir)"
+  agent="${port:-$(default_port)}"
   if role_installed "$role" && compose_running "$dir"; then
     data_ours=1
     saved=$(saved_port "$dir")
@@ -356,12 +375,6 @@ audit_role() {
     check_firewall_port "$agent"
     check_firewall_port 80
     check_firewall_port 443
-  fi
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 https://ghcr.io/v2/ 2>/dev/null || true)
-  if [[ "$code" == "200" || "$code" == "401" ]]; then
-    row_ok "ghcr.io"
-  else
-    row_warn "$(say "ghcr.io did not answer. Image pull may fail." "ghcr.io не ответил. Скачивание образа может не пройти.")"
   fi
 }
 
@@ -589,41 +602,56 @@ print_access() {
 
 cmd_install() {
   need_root
+  local hinted=""
   if [[ "$IN_MENU" -ne 1 ]]; then
     banner "agent  ${VERSION}"
   fi
   parse_install_args "$@"
+  section "$(say "Checks" "Проверки")"
+  audit_common
+  echo
+  [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before installing." "Исправьте ошибки перед установкой.")"
   prompt_role || return 0
+  hinted="$port"
+  if [[ -z "$port" ]] && role_installed "$role"; then
+    port=$(saved_port "$(app_dir)")
+  fi
+  section "$(say "Ports" "Порты")"
+  audit_role
+  echo
+  [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before installing." "Исправьте ошибки перед установкой.")"
+  [[ -n "$hinted" ]] || port=""
+  section "$(say "Setup" "Настройка")"
   if role_installed "$role"; then
     warn "$(say "The ${role} agent is already installed in $(app_dir)." "Агент ${role} уже стоит в $(app_dir).")"
-    if [[ -z "$key" && -z "$port" ]]; then
+    if [[ -z "$key" && -z "$hinted" ]]; then
       if confirm "$(say "Update the image and keep the current key and port?" "Обновить образ и оставить текущие ключ и порт?")" "y"; then
         load_saved || die "$(say "Saved .env has no key." "В сохранённом .env нет ключа.")"
         prompt_key
         prompt_port
-        section "$(say "Checks" "Проверки")"
-        audit_role
-        echo
-        [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before continuing." "Исправьте ошибки перед продолжением.")"
-        ensure_docker
-        write_unit
-        cmd_install_script
-        bring_up
-        print_access
+        finish_install
         return
       fi
       if ! confirm "$(say "Enter a new key and port?" "Ввести новый ключ и порт?")" "n"; then
         info "$(say "Left the current agent as it is." "Текущий агент не изменён.")"
         return
       fi
+      key=""
+      port=""
     fi
   fi
   prompt_key
   prompt_port
-  section "$(say "Checks" "Проверки")"
-  audit_role
-  echo
-  [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before installing." "Исправьте ошибки перед установкой.")"
+  if [[ "$port" != "${hinted:-$(default_port)}" ]]; then
+    section "$(say "Ports" "Порты")"
+    audit_role
+    echo
+    [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before installing." "Исправьте ошибки перед установкой.")"
+  fi
+  finish_install
+}
+
+finish_install() {
   ensure_docker
   write_unit
   cmd_install_script
@@ -665,15 +693,20 @@ pick_installed_role() {
 
 cmd_update() {
   need_root
+  section "$(say "Checks" "Проверки")"
+  audit_common
+  echo
+  [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before continuing." "Исправьте ошибки перед продолжением.")"
   pick_installed_role
   load_saved || die "$(say "Saved .env has no key." "В сохранённом .env нет ключа.")"
+  section "$(say "Ports" "Порты")"
+  audit_role
+  echo
+  [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before continuing." "Исправьте ошибки перед продолжением.")"
+  section "$(say "Setup" "Настройка")"
   prompt_key
   prompt_port
-  ensure_docker
-  write_unit
-  bring_up
-  ok "$(say "Updated." "Обновлено.")"
-  print_access
+  finish_install
 }
 
 cmd_compose() {
@@ -684,20 +717,24 @@ cmd_compose() {
 
 cmd_check() {
   need_root
+  section "$(say "Checks" "Проверки")"
+  audit_common
+  echo
+  [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks, then run this again." "Исправьте ошибки и запустите снова.")"
   if [[ "$role" != "dns" && "$role" != "proxy" ]]; then
     if role_installed dns && ! role_installed proxy; then
       role=dns
     elif role_installed proxy && ! role_installed dns; then
       role=proxy
     else
-      prompt_role
+      prompt_role || return 0
     fi
   fi
   if [[ -z "$port" ]] && role_installed "$role"; then
     port=$(saved_port "$(app_dir)")
   fi
   [[ -n "$port" ]] || port=$(default_port)
-  section "$(say "Checks" "Проверки")"
+  section "$(say "Ports" "Порты")"
   audit_role
   echo
   if [[ "$CHECK_FAIL" -eq 0 ]]; then

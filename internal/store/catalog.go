@@ -15,6 +15,7 @@ import (
 )
 
 var domainName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`)
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type DomainLink struct {
 	ProxyID string `json:"proxy_id"`
@@ -29,13 +30,15 @@ type DomainProxy struct {
 }
 
 type Domain struct {
-	ID      string        `json:"id"`
-	Name    string        `json:"name"`
-	Match   string        `json:"match"`
-	Enabled bool          `json:"enabled"`
-	Comment string        `json:"comment"`
-	Balance string        `json:"balance"`
-	Weights []DomainProxy `json:"weights"`
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Match     string        `json:"match"`
+	Enabled   bool          `json:"enabled"`
+	Comment   string        `json:"comment"`
+	Balance   string        `json:"balance"`
+	GroupID   string        `json:"group_id"`
+	GroupName string        `json:"group_name"`
+	Weights   []DomainProxy `json:"weights"`
 }
 
 type DomainInput struct {
@@ -44,13 +47,22 @@ type DomainInput struct {
 	Balance string       `json:"balance"`
 	Comment string       `json:"comment"`
 	Enabled bool         `json:"enabled"`
+	GroupID string       `json:"group_id"`
 	Links   []DomainLink `json:"links"`
+}
+
+type DomainGroup struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Comment string `json:"comment"`
+	Count   int    `json:"count"`
 }
 
 type ClientCIDR struct {
 	ID      string `json:"id"`
 	CIDR    string `json:"cidr"`
 	Label   string `json:"label"`
+	Kind    string `json:"list_kind"`
 	Enabled bool   `json:"enabled"`
 }
 
@@ -83,8 +95,11 @@ func (s *Store) ListDomains(ctx context.Context) ([]Domain, error) {
 		}
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, name, match_kind, enabled, comment, balance
-		FROM domain ORDER BY name
+		SELECT d.id::text, d.name, d.match_kind, d.enabled, d.comment, d.balance,
+		       COALESCE(d.group_id::text, ''), COALESCE(g.name, '')
+		FROM domain d
+		LEFT JOIN domain_group g ON g.id = d.group_id
+		ORDER BY g.name NULLS FIRST, d.name
 	`)
 	if err != nil {
 		return nil, err
@@ -93,7 +108,7 @@ func (s *Store) ListDomains(ctx context.Context) ([]Domain, error) {
 	var domains []Domain
 	for rows.Next() {
 		var d Domain
-		if err := rows.Scan(&d.ID, &d.Name, &d.Match, &d.Enabled, &d.Comment, &d.Balance); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.Match, &d.Enabled, &d.Comment, &d.Balance, &d.GroupID, &d.GroupName); err != nil {
 			return nil, err
 		}
 		domains = append(domains, d)
@@ -144,9 +159,9 @@ func (s *Store) CreateDomain(ctx context.Context, actor string, in DomainInput) 
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		var id string
 		err := tx.QueryRow(ctx, `
-			INSERT INTO domain (name, match_kind, enabled, comment, balance)
-			VALUES ($1, $2, $3, $4, $5) RETURNING id::text
-		`, in.Name, in.Match, in.Enabled, in.Comment, in.Balance).Scan(&id)
+			INSERT INTO domain (name, match_kind, enabled, comment, balance, group_id)
+			VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text
+		`, in.Name, in.Match, in.Enabled, in.Comment, in.Balance, nullUUID(in.GroupID)).Scan(&id)
 		if err != nil {
 			return mapErr(err)
 		}
@@ -164,9 +179,9 @@ func (s *Store) UpdateDomain(ctx context.Context, actor, id string, in DomainInp
 	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			UPDATE domain SET name = $2, match_kind = $3, enabled = $4, comment = $5, balance = $6
+			UPDATE domain SET name = $2, match_kind = $3, enabled = $4, comment = $5, balance = $6, group_id = $7
 			WHERE id = $1
-		`, id, in.Name, in.Match, in.Enabled, in.Comment, in.Balance)
+		`, id, in.Name, in.Match, in.Enabled, in.Comment, in.Balance, nullUUID(in.GroupID))
 		if err != nil {
 			return mapErr(err)
 		}
@@ -218,8 +233,75 @@ func replaceLinks(ctx context.Context, tx pgx.Tx, domainID string, links []Domai
 	return nil
 }
 
+func nullUUID(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
+}
+
+func (s *Store) ListGroups(ctx context.Context) ([]DomainGroup, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT g.id::text, g.name, g.comment, COUNT(d.id)
+		FROM domain_group g
+		LEFT JOIN domain d ON d.group_id = g.id
+		GROUP BY g.id
+		ORDER BY g.name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DomainGroup{}
+	for rows.Next() {
+		var g DomainGroup
+		if err := rows.Scan(&g.ID, &g.Name, &g.Comment, &g.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateGroup(ctx context.Context, actor, name, comment string) (string, error) {
+	name = strings.TrimSpace(name)
+	comment = strings.TrimSpace(comment)
+	if len(name) < 1 || len(name) > 64 {
+		return "", fmt.Errorf("%w: группа", ErrInvalid)
+	}
+	if len(comment) > 200 {
+		return "", fmt.Errorf("%w: комментарий", ErrInvalid)
+	}
+	var id string
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `
+			INSERT INTO domain_group (name, comment) VALUES ($1, $2) RETURNING id::text
+		`, name, comment).Scan(&id)
+		if err != nil {
+			return mapErr(err)
+		}
+		raw, _ := json.Marshal(map[string]string{"id": id, "name": name})
+		return auditTx(ctx, tx, actor, "group.create", raw)
+	})
+	return id, err
+}
+
+func (s *Store) DeleteGroup(ctx context.Context, actor, id string) error {
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM domain_group WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		raw, _ := json.Marshal(map[string]string{"id": id})
+		return auditTx(ctx, tx, actor, "group.delete", raw)
+	})
+}
+
 func (s *Store) ListClients(ctx context.Context) ([]ClientCIDR, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, cidr::text, label, enabled FROM client_cidr ORDER BY cidr`)
+	rows, err := s.pool.Query(ctx, `SELECT id::text, cidr::text, label, list_kind, enabled FROM client_cidr ORDER BY list_kind, cidr`)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +309,7 @@ func (s *Store) ListClients(ctx context.Context) ([]ClientCIDR, error) {
 	out := []ClientCIDR{}
 	for rows.Next() {
 		var c ClientCIDR
-		if err := rows.Scan(&c.ID, &c.CIDR, &c.Label, &c.Enabled); err != nil {
+		if err := rows.Scan(&c.ID, &c.CIDR, &c.Label, &c.Kind, &c.Enabled); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -235,8 +317,12 @@ func (s *Store) ListClients(ctx context.Context) ([]ClientCIDR, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) CreateClient(ctx context.Context, actor string, cidr, label string, enabled bool) error {
+func (s *Store) CreateClient(ctx context.Context, actor string, cidr, label, kind string, enabled bool) error {
 	norm, err := normalizeCIDR(cidr)
+	if err != nil {
+		return err
+	}
+	kind, err = normalizeListKind(kind)
 	if err != nil {
 		return err
 	}
@@ -247,18 +333,22 @@ func (s *Store) CreateClient(ctx context.Context, actor string, cidr, label stri
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		var id string
 		err := tx.QueryRow(ctx, `
-			INSERT INTO client_cidr (cidr, label, enabled) VALUES ($1::inet, $2, $3) RETURNING id::text
-		`, norm, label, enabled).Scan(&id)
+			INSERT INTO client_cidr (cidr, label, list_kind, enabled) VALUES ($1::inet, $2, $3, $4) RETURNING id::text
+		`, norm, label, kind, enabled).Scan(&id)
 		if err != nil {
 			return mapErr(err)
 		}
-		raw, _ := json.Marshal(map[string]string{"id": id, "cidr": norm})
+		raw, _ := json.Marshal(map[string]string{"id": id, "cidr": norm, "list_kind": kind})
 		return auditTx(ctx, tx, actor, "client.create", raw)
 	})
 }
 
-func (s *Store) UpdateClient(ctx context.Context, actor, id, cidr, label string, enabled bool) error {
+func (s *Store) UpdateClient(ctx context.Context, actor, id, cidr, label, kind string, enabled bool) error {
 	norm, err := normalizeCIDR(cidr)
+	if err != nil {
+		return err
+	}
+	kind, err = normalizeListKind(kind)
 	if err != nil {
 		return err
 	}
@@ -267,14 +357,14 @@ func (s *Store) UpdateClient(ctx context.Context, actor, id, cidr, label string,
 		return fmt.Errorf("%w: подпись", ErrInvalid)
 	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE client_cidr SET cidr = $2::inet, label = $3, enabled = $4 WHERE id = $1`, id, norm, label, enabled)
+		tag, err := tx.Exec(ctx, `UPDATE client_cidr SET cidr = $2::inet, label = $3, list_kind = $4, enabled = $5 WHERE id = $1`, id, norm, label, kind, enabled)
 		if err != nil {
 			return mapErr(err)
 		}
 		if tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
-		raw, _ := json.Marshal(map[string]string{"id": id, "cidr": norm})
+		raw, _ := json.Marshal(map[string]string{"id": id, "cidr": norm, "list_kind": kind})
 		return auditTx(ctx, tx, actor, "client.update", raw)
 	})
 }
@@ -413,12 +503,27 @@ func normalizeDomain(in *DomainInput) error {
 	if len(in.Comment) > 200 {
 		return fmt.Errorf("%w: комментарий", ErrInvalid)
 	}
+	in.GroupID = strings.TrimSpace(in.GroupID)
+	if in.GroupID != "" && !uuidRe.MatchString(in.GroupID) {
+		return fmt.Errorf("%w: группа", ErrInvalid)
+	}
 	for i := range in.Links {
 		if in.Links[i].Weight < 1 || in.Links[i].Weight > 1000 {
 			return fmt.Errorf("%w: вес", ErrInvalid)
 		}
 	}
 	return nil
+}
+
+func normalizeListKind(kind string) (string, error) {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "allow"
+	}
+	if kind != "allow" && kind != "deny" {
+		return "", fmt.Errorf("%w: список", ErrInvalid)
+	}
+	return kind, nil
 }
 
 func normalizeCIDR(raw string) (string, error) {

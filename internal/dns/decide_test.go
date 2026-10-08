@@ -73,12 +73,30 @@ func TestDecideTwoA(t *testing.T) {
 	}
 }
 
-func TestEmptyAllowUsesBootstrap(t *testing.T) {
-	snap := &snapshot.DNS{Bootstrap: []string{"203.0.113.0/24"}, Domains: []snapshot.Domain{}}
-	if Decide(snap, net.ParseIP("198.51.100.1"), "example.com.", mdns.TypeA, nil).Action != ActionRefuse {
-		t.Fatal("stranger")
+func TestAccessLists(t *testing.T) {
+	open := &snapshot.DNS{Domains: []snapshot.Domain{}}
+	if Decide(open, net.ParseIP("198.51.100.1"), "example.com.", mdns.TypeA, nil).Action != ActionForward {
+		t.Fatal("empty lists allow everyone")
 	}
-	if Decide(snap, net.ParseIP("203.0.113.5"), "no.example.", mdns.TypeA, nil).Action != ActionForward {
-		t.Fatal("bootstrap")
+	denied := &snapshot.DNS{Deny: []string{"198.51.100.0/24"}, Domains: []snapshot.Domain{}}
+	if Decide(denied, net.ParseIP("198.51.100.9"), "example.com.", mdns.TypeA, nil).Action != ActionRefuse {
+		t.Fatal("blacklist")
+	}
+	if Decide(denied, net.ParseIP("203.0.113.9"), "example.com.", mdns.TypeA, nil).Action != ActionForward {
+		t.Fatal("not on blacklist")
+	}
+	listed := &snapshot.DNS{Allow: []string{"198.51.100.0/24"}, Deny: []string{"198.51.100.9/32"}, Domains: []snapshot.Domain{}}
+	if Decide(listed, net.ParseIP("192.0.2.1"), "example.com.", mdns.TypeA, nil).Action != ActionRefuse {
+		t.Fatal("outside whitelist")
+	}
+	if Decide(listed, net.ParseIP("198.51.100.9"), "example.com.", mdns.TypeA, nil).Action != ActionRefuse {
+		t.Fatal("blacklist wins inside whitelist")
+	}
+	if Decide(listed, net.ParseIP("198.51.100.8"), "example.com.", mdns.TypeA, nil).Action != ActionForward {
+		t.Fatal("whitelist")
+	}
+	boot := &snapshot.DNS{Bootstrap: []string{"203.0.113.5/32"}, Deny: []string{"203.0.113.0/24"}, Domains: []snapshot.Domain{}}
+	if Decide(boot, net.ParseIP("203.0.113.5"), "example.com.", mdns.TypeA, nil).Action != ActionForward {
+		t.Fatal("bootstrap stays allowed")
 	}
 }
