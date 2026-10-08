@@ -28,9 +28,6 @@ func healthcheckCmd() *cobra.Command {
 }
 
 func probe(ctx context.Context, url string, timeout time.Duration) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

@@ -474,7 +474,7 @@ func Listen(ctx context.Context, e *Engine, cfg ListenConfig) error {
 	case <-ctx.Done():
 	case result = <-errCh:
 	}
-	shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	shut, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	_ = udp.Shutdown()
 	_ = tcp.Shutdown()

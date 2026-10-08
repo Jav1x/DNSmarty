@@ -165,7 +165,7 @@ func Serve(ctx context.Context, ln net.Listener, cfg Config) error {
 	}
 	go func() {
 		<-ctx.Done()
-		shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		shut, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shut)
 		_ = ln.Close()

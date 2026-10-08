@@ -55,7 +55,7 @@ func Serve(ctx context.Context, addr string, log *slog.Logger) {
 	}
 	go func() {
 		<-ctx.Done()
-		shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		shut, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shut)
 	}()

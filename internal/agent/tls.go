@@ -55,11 +55,13 @@ func privateKey(nodeKey []byte, info string) (*ecdsa.PrivateKey, error) {
 			continue
 		}
 		scalar := d.FillBytes(make([]byte, 32))
-		x, y := curve.ScalarBaseMult(scalar)
-		return &ecdsa.PrivateKey{
-			PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
-			D:         d,
-		}, nil
+		// ParseRawPrivateKey validates the scalar and derives the public key itself;
+		// the raw X/Y/D fields are deprecated in Go 1.26.
+		priv, err := ecdsa.ParseRawPrivateKey(curve, scalar)
+		if err != nil {
+			continue
+		}
+		return priv, nil
 	}
 }
 

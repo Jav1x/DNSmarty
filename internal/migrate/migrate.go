@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -17,7 +18,7 @@ func Up(dsn string) error {
 		return err
 	}
 	defer db.Close()
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		return fmt.Errorf("postgres: %w", err)
 	}
 	goose.SetBaseFS(migrations.FS)

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -43,7 +44,7 @@ func closedByPeer(t *testing.T, conn net.Conn) bool {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	n, err := conn.Read(make([]byte, 1))
-	return n == 0 && err == io.EOF
+	return n == 0 && errors.Is(err, io.EOF)
 }
 
 func TestACLRefusesBeforeRead(t *testing.T) {

@@ -78,10 +78,10 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) (st
 	if err != nil {
 		return "", false, err
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
-		return "", false, nil
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil {
+		return id, true, nil
 	}
-	return id, true, nil
+	return "", false, nil
 }
 
 // CreateSession stores a new session and returns the cookie value and the CSRF token.

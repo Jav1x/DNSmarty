@@ -153,11 +153,12 @@ func (s *Server) Snapshot() *snapshot.ProxySnap {
 func (s *Server) Reports() <-chan Report { return s.reports }
 
 func (s *Server) Listen(ctx context.Context) error {
-	lnHTTP, err := net.Listen("tcp", s.http)
+	var lc net.ListenConfig
+	lnHTTP, err := lc.Listen(ctx, "tcp", s.http)
 	if err != nil {
 		return err
 	}
-	lnTLS, err := net.Listen("tcp", s.https)
+	lnTLS, err := lc.Listen(ctx, "tcp", s.https)
 	if err != nil {
 		_ = lnHTTP.Close()
 		return err
@@ -183,7 +184,8 @@ func (s *Server) Serve(ctx context.Context, lnHTTP, lnTLS net.Listener) error {
 	case result = <-errCh:
 	}
 	_ = lnTLS.Close()
-	shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// WithoutCancel: the parent is already done, only the deadline matters.
+	shut, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	_ = web.Shutdown(shut)
 	s.transport.CloseIdleConnections()
@@ -194,12 +196,13 @@ func (s *Server) acceptTLS(ctx context.Context, ln net.Listener) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				return nil
+			if !errors.Is(err, net.ErrClosed) && ctx.Err() == nil {
+				// Not a shutdown: a real accept failure.
+				return err
 			}
-			return err
+			return nil
 		}
-		go s.handleTLS(conn.(*gatedConn))
+		go s.handleTLS(ctx, conn.(*gatedConn))
 	}
 }
 
@@ -301,7 +304,7 @@ func (s *Server) refuseACL(client netip.Addr) {
 	}
 }
 
-func (s *Server) handleTLS(conn *gatedConn) {
+func (s *Server) handleTLS(ctx context.Context, conn *gatedConn) {
 	defer conn.Close()
 	clientIP := conn.client.String()
 	snap := conn.snap.snap
@@ -316,7 +319,7 @@ func (s *Server) handleTLS(conn *gatedConn) {
 		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, SNI: clip(name, 255), Status: "refused", DialError: clip(msg, 300)})
 		return
 	}
-	up, err := s.dialOrigin(context.Background(), snap, snapshot.Normalize(name), "443")
+	up, err := s.dialOrigin(ctx, snap, snapshot.Normalize(name), "443")
 	if err != nil {
 		s.log.Warn("dial", "sni", name, "client", clientIP, "err", err)
 		s.emit(Report{At: time.Now().UTC(), ClientIP: clientIP, SNI: clip(name, 255), Status: "dial_error", DialError: clip(err.Error(), 300)})

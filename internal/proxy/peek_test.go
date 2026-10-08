@@ -1,10 +1,13 @@
 package proxy
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestParseClientHello(t *testing.T) {
 	raw := clientHello("www.example.com")
-	if _, err := ParseClientHello(raw[:10]); err != ErrNeedMore {
+	if _, err := ParseClientHello(raw[:10]); !errors.Is(err, ErrNeedMore) {
 		t.Fatalf("short: %v", err)
 	}
 	name, err := ParseClientHello(raw)
@@ -15,7 +18,7 @@ func TestParseClientHello(t *testing.T) {
 
 func TestParseHost(t *testing.T) {
 	raw := []byte("GET / HTTP/1.1\r\nHost: www.example.com:80\r\nUser-Agent: x\r\n\r\n")
-	if _, err := ParseHost(raw[:12]); err != ErrNeedMore {
+	if _, err := ParseHost(raw[:12]); !errors.Is(err, ErrNeedMore) {
 		t.Fatal(err)
 	}
 	host, err := ParseHost(raw)

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -230,9 +231,10 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", id)
 		sw := &statusWriter{ResponseWriter: w}
 		r = r.WithContext(context.WithValue(r.Context(), requestIDKey, id))
+		rctx := r.Context()
 		defer func() {
 			if p := recover(); p != nil {
-				if p == http.ErrAbortHandler {
+				if err, ok := p.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(p)
 				}
 				s.log.Error("panic", "id", id, "path", r.URL.Path, "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
@@ -249,7 +251,7 @@ func (s *Server) observe(next http.Handler) http.Handler {
 			} else if !strings.HasPrefix(r.URL.Path, "/api/") {
 				level = slog.LevelDebug
 			}
-			s.log.Log(r.Context(), level, "http",
+			s.log.Log(rctx, level, "http",
 				"id", id, "method", r.Method, "path", r.URL.Path, "status", sw.status,
 				"bytes", sw.bytes, "ms", time.Since(start).Milliseconds(), "ip", s.clientIP(r).String())
 		}()
