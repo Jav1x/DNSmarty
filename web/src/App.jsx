@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { api, setCSRF } from "./api";
 import { ToastProvider } from "./components/Toast";
 import { I18nProvider } from "./i18n";
+import { ROUTES } from "./routes";
 import { Login } from "./pages/Login";
 import { Shell } from "./pages/Shell";
 import { Overview } from "./pages/Overview";
@@ -32,8 +33,12 @@ export function App() {
           <Route element={user ? <Shell user={user} onOut={() => setUser(null)} /> : <Navigate to="/login" />}>
             <Route path="/" element={<Overview />} />
             <Route path="/nodes" element={<Nodes />} />
-            <Route path="/domains" element={<Domains />} />
-            <Route path="/clients" element={<Clients />} />
+            {/* Спец §4: «Доступ» — это прежняя страница Клиентов (визуально переписывается в задаче 5). */}
+            <Route path={ROUTES.access} element={<Clients />} />
+            {/* Фаза 1: «Сервисы» показывает старую страницу доменов; новая модель — фаза 2. */}
+            <Route path={ROUTES.services} element={<Navigate to="/domains" replace />} />
+            {/* Старые закладки не должны отдавать 404 (ROUTES.redirect). */}
+            <Route path="/clients" element={<Navigate to={ROUTES.redirect.clients} replace />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/stats" element={<Stats />} />
             <Route path="/account" element={<Account />} />

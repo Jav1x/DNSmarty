@@ -1,23 +1,32 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import {
-  Activity, Globe2, FolderTree, ShieldCheck, ScrollText, Settings2,
-  History, UserRound, LogOut, Menu, Monitor, Sun, Moon, BarChart3,
-} from "lucide-react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { LogOut, Menu, Monitor, Sun, Moon } from "lucide-react";
 import { api } from "../api";
 import { LangSwitch, useI18n } from "../i18n";
 import { useTheme } from "../hooks/useLoad";
+import { ROUTES } from "../routes";
 
-const nav = [
-  ["/", "overview", Activity],
-  ["/nodes", "nodes", Globe2],
-  ["/domains", "domains", FolderTree],
-  ["/clients", "clients", ShieldCheck],
-  ["/logs", "logs", ScrollText],
-  ["/stats", "stats", BarChart3],
-  ["/settings", "settings", Settings2],
-  ["/audit", "audit", History],
-  ["/account", "account", UserRound],
+/* Сайдбар — спец §4: три группы (Мониторинг / Управление / Панель).
+   Разметка и глифы 1:1 из утверждённого макета .design-lab/lab16.html:
+   mono-глифы в .ic, активный пункт .on с inset-полосой.
+   Активность считает сам Shell (не NavLink), чтобы «Сервисы» подсвечивался,
+   пока /services в фазе 1 отдаёт редирект на /domains. */
+const groups = [
+  ["groupMonitoring", [
+    ["/", "overview", "◉"],
+    ["/logs", "logs", "▤"],
+    ["/stats", "stats", "▥"],
+  ]],
+  ["groupManagement", [
+    ["/nodes", "nodes", "◈"],
+    [ROUTES.services, "services", "❧", [ROUTES.services, "/domains"]],
+    [ROUTES.access, "access", "⛨"],
+  ]],
+  ["groupPanel", [
+    ["/settings", "settings", "⚙"],
+    ["/audit", "audit", "⏱"],
+    ["/account", "account", "◉"],
+  ]],
 ];
 
 function ThemeSwitch() {
@@ -49,6 +58,7 @@ export function Shell({ user, onOut }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   // Close the drawer on navigation.
   useEffect(() => () => setOpen(false), [navigate]);
   async function logout() {
@@ -72,18 +82,27 @@ export function Shell({ user, onOut }) {
       ><Menu size={16} /></button>
       {open && <button type="button" className="backdrop" aria-label={t("menu")} onClick={() => setOpen(false)} />}
       <aside className={`side${open ? " open" : ""}`}>
-        <div className="brand"><b>DNSmarty</b><span>DNS</span></div>
+        <div className="brand"><b>DNS</b>marty</div>
         <nav aria-label={t("menu")}>
-          {nav.map(([to, key, Icon]) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              className={({ isActive }) => (isActive ? "on" : "")}
-              onClick={() => setOpen(false)}
-            >
-              <Icon size={16} />{t(key)}
-            </NavLink>
+          {groups.map(([gkey, items]) => (
+            <div className="grp" key={gkey}>
+              <div className="gh">{t(gkey)}</div>
+              {items.map(([to, key, glyph, activePaths]) => {
+                const active = (activePaths ?? [to]).includes(pathname);
+                return (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === "/"}
+                    className={active ? "on" : ""}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => setOpen(false)}
+                  >
+                    <span className="ic" aria-hidden="true">{glyph}</span>{t(key)}
+                  </NavLink>
+                );
+              })}
+            </div>
           ))}
         </nav>
         <div className="who">
