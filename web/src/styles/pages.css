@@ -178,6 +178,14 @@
 
 .table-wrap { overflow-x: auto; }
 
+/* ══ Настройки — секции и drag-таблица апстримов ═══════════════════════════
+   Порт .design-lab/lab13.html. Общие классы (.sect/.savebar/.uptable/.drag/
+   .protochip/.apply/.prio/.tip/.grid2/.grid3) уже слиты в ui.css; здесь только
+   то, чего там нет: индикатор места drop при перетаскивании и приглушение
+   перетаскиваемой строки (лаба 13: tr.dragging/drop-before). */
+.uptable tr.drop-before td { box-shadow: 0 -2px 0 var(--accent); }
+.uptable tr.dragging td { opacity: .4; }
+
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }
   .side {

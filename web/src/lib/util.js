@@ -41,6 +41,15 @@ export function fmtBytes(n) {
   return `${(v / 1024).toFixed(1)} TB`;
 }
 
+// Протокол апстрима — вычисляется на клиенте из адреса (лаба 13):
+// https://… → DoH, tls://… или порт 853 → DoT, иначе UDP.
+export function protoOf(addr) {
+  const s = String(addr).trim().toLowerCase();
+  if (s.startsWith('https://')) return 'doh';
+  if (s.startsWith('tls://') || /:853$/.test(s)) return 'dot';
+  return 'udp';
+}
+
 // Русские короткие формы: «12 с», «3 мин», «2 ч», «27 д».
 export function ago(iso) {
   const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);

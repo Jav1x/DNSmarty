@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normFqdn, parseCidr, shares, fmtBytes, ago } from './util'
+import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf } from './util'
 
 describe('normFqdn', () => {
   it('lowercases and trims trailing dot', () => expect(normFqdn(' Example.COM. ')).toBe('example.com'))
@@ -18,6 +18,16 @@ describe('shares', () => {
 })
 describe('fmtBytes', () => {
   it('formats MB', () => expect(fmtBytes(1024*1024*5)).toMatch(/^5(\.0)? MB$/))
+})
+describe('protoOf', () => {
+  // Закреплённые случаи из брифа (лаба 13).
+  it('https:// → DoH', () => expect(protoOf('https://cloudflare-dns.com/dns-query')).toBe('doh'))
+  it('host:853 → DoT', () => expect(protoOf('dns.quad9.net:853')).toBe('dot'))
+  it('ip:53 → UDP', () => expect(protoOf('9.9.9.9:53')).toBe('udp'))
+  // Края: tls:// тоже DoT; порт у https:// не меняет DoH; регистр схемы не важен.
+  it('tls:// → DoT', () => expect(protoOf('tls://dns.google')).toBe('dot'))
+  it('https:// with port is still DoH', () => expect(protoOf('https://dns.google:443/dns-query')).toBe('doh'))
+  it('case-insensitive scheme', () => expect(protoOf('HTTPS://dns.google/dns-query')).toBe('doh'))
 })
 describe('ago', () => {
   it('seconds', () => expect(ago(new Date(Date.now()-12000).toISOString())).toBe('12 с'))
