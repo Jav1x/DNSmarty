@@ -37,6 +37,8 @@ export function App() {
             <Route path={ROUTES.access} element={<Clients />} />
             {/* Фаза 1: «Сервисы» показывает старую страницу доменов; новая модель — фаза 2. */}
             <Route path={ROUTES.services} element={<Navigate to="/domains" replace />} />
+            {/* /domains живёт как раньше, пока новая модель сервисов не готова (фаза 2). */}
+            <Route path="/domains" element={<Domains />} />
             {/* Старые закладки не должны отдавать 404 (ROUTES.redirect). */}
             <Route path="/clients" element={<Navigate to={ROUTES.redirect.clients} replace />} />
             <Route path="/logs" element={<Logs />} />
