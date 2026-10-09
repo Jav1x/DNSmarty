@@ -188,6 +188,17 @@
 .uptable td.chipcol { width: 74px; } /* фикс-ширина колонки чипа протокола (лаба 13); имя без «chip» — не путать с пилюлей .chip из ui.css */
 .endpad { height: 20px; }        /* хвостовой отступ после секций (лаба 13) */
 
+/* ══ Ноды — bulkbar «Удалить» и чекбоксы таблицы ═══════════════════════════
+   Порт .design-lab/lab10.html. Общие классы (.bulkbar/.abtn/.offbox/.tok/.rot/
+   .dismark/.disrow/.flag/.ver) уже слиты в ui.css; здесь только то, чего там
+   нет: красная кнопка «Удалить» в bulkbar (лаба 10 держала её inline) и
+   accent-color чекбоксов — в лабе тоже inline на каждом input. */
+.bulkbar .btn.bulkdel { color: var(--danger); border-color: rgba(255, 92, 92, .4); }
+.bulkbar .btn.bulkdel:hover { background: rgba(255, 92, 92, .08); }
+input[type="checkbox"] { accent-color: var(--accent); }
+.finput.search { width: 190px; } /* поиск по таблице нод (лаба 10) */
+
+
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }
   .side {
