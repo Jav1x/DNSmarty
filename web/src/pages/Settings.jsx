@@ -5,6 +5,7 @@
 // Сетевой контракт прежний: GET /api/settings, POST /api/settings,
 // POST /api/upstreams, POST /api/upstreams/:id, DELETE /api/upstreams/:id.
 import { useEffect, useRef, useState } from "react";
+import { api } from "../api";
 import { useLoad } from "../hooks/useLoad";
 import { useI18n } from "../i18n";
 import { Err, SkeletonRows } from "../components/Bits";
@@ -63,7 +64,7 @@ export function Settings() {
     const svRows = server.upstreams;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
-      if (!r.id) { n++; continue; } // новая строка — несохранённая всегда
+      if (!r.id) { if (r.addr.trim()) n++; continue; } // новая строка с адресом
       const ui = svRows.findIndex((x) => x.id === r.id);
       if (ui < 0) { n++; continue; }
       // сверка с позицией в серверном списке (а не с сырым ordinal — он может
@@ -188,7 +189,7 @@ export function Settings() {
                       className={`${r.key === dragKey ? "dragging" : ""} ${r.key === overKey && r.key !== dragKey ? "drop-before" : ""}`}
                     >
                       <td className="drag">⠿</td>
-                      <td style={{ width: "74px" }}><span className={`protochip ${p === "udp" ? "" : p}`}>{chip[p]}</span></td>
+                      <td className="chip"><span className={`protochip ${p === "doh" ? "doh" : p === "dot" ? "tls" : ""}`}>{chip[p]}</span></td>
                       <td>
                         <input type="text" value={r.addr} placeholder="9.9.9.9:53" onChange={setRow(r.key)} autoFocus={!r.id} />
                       </td>
@@ -280,7 +281,7 @@ export function Settings() {
           </div>
         </div>
       </section>
-      <div style={{ height: "20px" }} />
+      <div className="endpad" />
     </>
   );
 }
