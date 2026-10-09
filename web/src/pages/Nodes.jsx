@@ -111,7 +111,7 @@ export function Nodes() {
       setSelected(new Set());
       reload();
       toast(t("saved"));
-    } catch (e) { setError(e); }
+    } catch (e) { setError(e); reload(); } // успехи до сбоя в bulk-цикле уже на сервере
   }
   function bulkEnabled(next) {
     const targets = nodes.filter((n) => selected.has(n.id) && n.enabled !== next);
@@ -321,7 +321,7 @@ function ipOf(n) {
 function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
   const { t, err } = useI18n();
   const [draft, setDraft] = useState(() => nodeInput(node, node.enabled));
-  const [base, setBase] = useState(() => nodeInput(node, node.enabled));
+  const [base] = useState(() => nodeInput(node, node.enabled));
   const [key, setKey] = useState(""); // разовый показ ключа после перевыпуска
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -617,15 +617,18 @@ function NewNodeModal({ onClose, reload, setError }) {
   );
 }
 
-/* Поля формы создания: те же NodeInput, что и в модалке редактирования. */
+/* Поля формы создания: те же NodeInput, что и в модалке редактирования.
+   Порт по умолчанию — по роли, как в dnsmarty-node.sh (dns → 9443, proxy → 9444)
+   и в прежнем UI; роль управляемая, смена роли подставляет её порт по умолчанию. */
 function NodeNewFields() {
   const { t } = useI18n();
+  const [role, setRole] = useState("dns");
   return (
     <>
       <div className="frow">
         <div><label htmlFor="nn-name">{t("name")}</label><input id="nn-name" name="name" required /></div>
         <div><label htmlFor="nn-role">{t("role")}</label>
-          <select id="nn-role" name="role" defaultValue="dns"><option value="dns">dns</option><option value="proxy">proxy</option></select>
+          <select id="nn-role" name="role" value={role} onChange={(e) => setRole(e.target.value)}><option value="dns">dns</option><option value="proxy">proxy</option></select>
         </div>
       </div>
       <div className="frow">
@@ -635,7 +638,7 @@ function NodeNewFields() {
       <div className="frow3">
         <div><label htmlFor="nn-region">{t("region")}</label><input id="nn-region" name="region" /></div>
         <div><label htmlFor="nn-host">{t("agentHost")}</label><input id="nn-host" name="agent_host" required /></div>
-        <div><label htmlFor="nn-port">{t("agentPort")}</label><input id="nn-port" name="agent_port" defaultValue="224" required /></div>
+        <div><label htmlFor="nn-port">{t("agentPort")}</label><input id="nn-port" name="agent_port" key={role} defaultValue={role === "dns" ? "9443" : "9444"} required /></div>
       </div>
       <div className="check">
         <input type="checkbox" id="nn-enabled" name="enabled" defaultChecked />

@@ -71,7 +71,6 @@ export const dict = {
     rotIn: "in rotation",
     rotOut: "out of rotation",
     rotDis: "disabled",
-    updatedVer: "{have} · agent is outdated",
     bulkSel: ({ n = 0 }) => `Selected ${n} node${n === 1 ? "" : "s"}`,
     toRot: "Put in rotation",
     fromRot: "Take out of rotation",
@@ -368,7 +367,6 @@ export const dict = {
     rotIn: "в ротации",
     rotOut: "из ротации",
     rotDis: "отключена",
-    updatedVer: "{have} · агент устарел",
     // «выбрано 2 ноды / 5 нод / 1 нода» — русское согласование живёт функцией.
     bulkSel: ({ n = 0 } = {}) => {
       const num = Number(n) || 0, k = num % 10, h = num % 100;

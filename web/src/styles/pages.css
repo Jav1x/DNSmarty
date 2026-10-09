@@ -192,10 +192,12 @@
    Порт .design-lab/lab10.html. Общие классы (.bulkbar/.abtn/.offbox/.tok/.rot/
    .dismark/.disrow/.flag/.ver) уже слиты в ui.css; здесь только то, чего там
    нет: красная кнопка «Удалить» в bulkbar (лаба 10 держала её inline) и
-   accent-color чекбоксов — в лабе тоже inline на каждом input. */
+   accent-color чекбоксов — в лабе тоже inline на каждом input; скоуп — чекбоксы
+   нод: таблица (.tablecard) и модальные формы (.modal .check, портал Radix). */
 .bulkbar .btn.bulkdel { color: var(--danger); border-color: rgba(255, 92, 92, .4); }
 .bulkbar .btn.bulkdel:hover { background: rgba(255, 92, 92, .08); }
-input[type="checkbox"] { accent-color: var(--accent); }
+.tablecard input[type="checkbox"],
+.modal .check input[type="checkbox"] { accent-color: var(--accent); }
 .finput.search { width: 190px; } /* поиск по таблице нод (лаба 10) */
 
 
