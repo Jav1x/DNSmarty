@@ -189,7 +189,7 @@ export function Settings() {
                       className={`${r.key === dragKey ? "dragging" : ""} ${r.key === overKey && r.key !== dragKey ? "drop-before" : ""}`}
                     >
                       <td className="drag">⠿</td>
-                      <td className="chip"><span className={`protochip ${p === "doh" ? "doh" : p === "dot" ? "tls" : ""}`}>{chip[p]}</span></td>
+                      <td className="chipcol"><span className={`protochip ${p === "doh" ? "doh" : p === "dot" ? "tls" : ""}`}>{chip[p]}</span></td>
                       <td>
                         <input type="text" value={r.addr} placeholder="9.9.9.9:53" onChange={setRow(r.key)} autoFocus={!r.id} />
                       </td>

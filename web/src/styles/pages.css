@@ -185,7 +185,7 @@
    перетаскиваемой строки (лаба 13: tr.dragging/drop-before). */
 .uptable tr.drop-before td { box-shadow: 0 -2px 0 var(--accent); }
 .uptable tr.dragging td { opacity: .4; }
-.uptable td.chip { width: 74px; } /* фикс-ширина колонки чипа протокола (лаба 13) */
+.uptable td.chipcol { width: 74px; } /* фикс-ширина колонки чипа протокола (лаба 13); имя без «chip» — не путать с пилюлей .chip из ui.css */
 .endpad { height: 20px; }        /* хвостовой отступ после секций (лаба 13) */
 
 @media (max-width: 900px) {
