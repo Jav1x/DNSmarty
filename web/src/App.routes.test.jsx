@@ -27,9 +27,9 @@ function Current({ path }) {
 }
 
 /* Повторяет структуру <Routes> в App.jsx (пути — из того же источника:
-   литералы страниц + ROUTES из routes.js). */
-/* Повторяет структуру <Routes> в App.jsx: спред из массива маршрутов —
-  Routes принимает только Route или Fragment как прямые дети. */
+   литералы страниц + ROUTES из routes.js). Правки App.jsx дублируются
+   здесь (review-дифф ловит расхождение); раскладка — плоским массивом:
+   Routes принимает только Route как прямые дети. */
 const appRoutes = [
   <Route key="login" path="/login" element={<Spy tag="login" />} />,
   <Route key="overview" path="/" element={<Spy tag="overview" />} />,
