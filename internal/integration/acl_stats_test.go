@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +27,8 @@ import (
 	раскладывается по включённым правилам client_cidr (netip-попадание IP в CIDR).
 	Проверки: счётчики по /32 и /24; выключенное правило молчит; старые (>24ч)
 	и не-acl записи не считаются; при нуле правил — пустой срез и "rules":[]
-	в JSON эндпоинта (не null и не ошибка).
+	в JSON эндпоинта (не null и не ошибка); контракт лимита — 201 включённое
+	правило даёт ровно 200 записей (aclRulesLimit).
 */
 func TestACLRulesStats(t *testing.T) {
 	ctx := context.Background()
@@ -155,6 +157,47 @@ func TestACLRulesStats(t *testing.T) {
 		if want := got[r.ID]; r.Hits != want {
 			t.Fatalf("эндпоинт %s: %d (хотим %d)", r.ID, r.Hits, want)
 		}
+	}
+
+	// Лимит контракта: aclRulesLimit = 200 включённых правил. Досыпаем 199
+	// разрешённых deny-правил (192.168.N.0/24 — мимо всех хитовых IP), всего
+	// 201 включённое. ORDER BY list_kind, cidr ставит allow и младшие CIDR
+	// раньше, поэтому ровно 200 записей, а вытесненным оказывается /32 deny —
+	// последний по сортировке.
+	for n := 0; n < 199; n++ {
+		cidr := fmt.Sprintf("192.168.%d.0/24", n)
+		if err := st.CreateClient(ctx, "test", cidr, "filler", "deny", true); err != nil {
+			t.Fatalf("%s: %v", cidr, err)
+		}
+	}
+	capped, err := st.ACLRulesStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capped) != 200 {
+		t.Fatalf("лимит: %d записей (хотим ровно 200 из 201 включённого)", len(capped))
+	}
+	cappedHits := map[string]int64{}
+	for _, r := range capped {
+		cappedHits[r.ID] = r.Hits
+	}
+	if cappedHits[ids["203.0.113.0/24"]] != 3 {
+		t.Fatalf("лимит вытеснил /24: %d (хотим 3)", cappedHits[ids["203.0.113.0/24"]])
+	}
+	if _, inside := cappedHits[ids["198.51.100.7/32"]]; inside {
+		t.Fatal("/32 deny должен быть вытеснен лимитом (последний по ORDER BY list_kind, cidr)")
+	}
+
+	// Эндпоинт под лимитом: те же 200 записей.
+	cappedJSON := aclStatsJSON(t, st)
+	var cappedBody struct {
+		Rules []store.RuleHit `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(cappedJSON), &cappedBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(cappedBody.Rules) != 200 {
+		t.Fatalf("эндпоинт под лимитом: %d записей (хотим 200)", len(cappedBody.Rules))
 	}
 }
 
