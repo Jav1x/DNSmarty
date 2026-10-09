@@ -9,7 +9,7 @@ import { Shell } from "./pages/Shell";
 import { Overview } from "./pages/Overview";
 import { Nodes } from "./pages/Nodes";
 import { Domains } from "./pages/Domains";
-import { Clients } from "./pages/Clients";
+import { Access } from "./pages/Access";
 import { Logs } from "./pages/Logs";
 import { Stats } from "./pages/Stats";
 import { Account } from "./pages/Account";
@@ -34,7 +34,7 @@ export function App() {
             <Route path="/" element={<Overview />} />
             <Route path="/nodes" element={<Nodes />} />
             {/* Спец §4: «Доступ» — это прежняя страница Клиентов (визуально переписывается в задаче 5). */}
-            <Route path={ROUTES.access} element={<Clients />} />
+            <Route path={ROUTES.access} element={<Access />} />
             {/* Фаза 1: «Сервисы» показывает старую страницу доменов; новая модель — фаза 2. */}
             <Route path={ROUTES.services} element={<Navigate to="/domains" replace />} />
             {/* /domains живёт как раньше, пока новая модель сервисов не готова (фаза 2). */}

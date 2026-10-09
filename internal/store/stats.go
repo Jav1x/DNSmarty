@@ -2,7 +2,15 @@ package store
 
 import (
 	"context"
+	"net/netip"
 )
+
+// RuleHit is one access rule (client_cidr) with its 24 h block count:
+// how many dns_hit entries with decision='acl' fall into the rule's CIDR.
+type RuleHit struct {
+	ID   string `json:"id"`
+	Hits int64  `json:"hits"`
+}
 
 // DomainStat is one row of the top-domains table: queries in the window,
 // how many of them ACL refused, and how many distinct clients asked.
@@ -170,6 +178,79 @@ func (s *Store) ClientDomains(ctx context.Context, ip string, window int64) ([]C
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// aclRulesLimit bounds the rules we expand hits into: the aggregate is for the
+// Access page table, which never shows more than this many rows.
+const aclRulesLimit = 200
+
+// ACLRulesStats counts blocked DNS queries (decision='acl') of the last 24 hours
+// per enabled access rule: an IP's hits are added to every rule whose CIDR
+// contains it. Disabled rules are silent. With no rules — an empty slice, not an error.
+func (s *Store) ACLRulesStats(ctx context.Context) ([]RuleHit, error) {
+	// Per-IP block counts over the window. host() returns the address text
+	// without the netmask; a NULL client_ip (e.g. no session) cannot match anyway.
+	rows, err := s.pool.Query(ctx, `
+		SELECT coalesce(host(client_ip), ''), count(*)
+		FROM dns_hit
+		WHERE decision = 'acl' AND client_ip IS NOT NULL AND at > now() - interval '24 hours'
+		GROUP BY client_ip
+	`)
+	if err != nil {
+		return nil, err
+	}
+	type block struct {
+		addr netip.Addr
+		n    int64
+	}
+	var blocks []block
+	for rows.Next() {
+		var ip string
+		var n int64
+		if err := rows.Scan(&ip, &n); err != nil {
+			return nil, err
+		}
+		a, err := netip.ParseAddr(ip)
+		if err != nil {
+			continue // a malformed address cannot fall into any rule
+		}
+		blocks = append(blocks, block{addr: a.Unmap(), n: n})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Enabled rules only; the limit is part of the contract.
+	rules, err := s.pool.Query(ctx, `
+		SELECT id::text, cidr::text
+		FROM client_cidr
+		WHERE enabled
+		ORDER BY list_kind, cidr
+		LIMIT $1
+	`, aclRulesLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rules.Close()
+	out := make([]RuleHit, 0)
+	for rules.Next() {
+		var id, cidr string
+		if err := rules.Scan(&id, &cidr); err != nil {
+			return nil, err
+		}
+		p, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			continue // stored by normalizeCIDR, so this cannot happen
+		}
+		var hits int64
+		for _, b := range blocks {
+			if p.Contains(b.addr) {
+				hits += b.n
+			}
+		}
+		out = append(out, RuleHit{ID: id, Hits: hits})
+	}
+	return out, rules.Err()
 }
 
 // TopProxyDomains ranks proxy SNIs by session count and total bytes over the window.

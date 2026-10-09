@@ -650,6 +650,17 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// statsACL reports blocked DNS queries per access rule over the last 24 hours:
+// the hits column of the Access page table. No rules — an empty list, not an error.
+func (s *Server) statsACL(w http.ResponseWriter, r *http.Request) {
+	rules, err := s.store.ACLRulesStats(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
+}
+
 // statsClient lists the domains one client asked for. Only a single address is accepted:
 // a subnet would mix several clients into one list.
 func (s *Server) statsClient(w http.ResponseWriter, r *http.Request) {
