@@ -30,10 +30,121 @@
 .side .ghost:hover:not(:disabled) { background: rgba(255,255,255,.03); }
 .main { padding: 22px 26px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
-.login { max-width: 380px; margin: 12vh auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-m); padding: var(--space-5); box-shadow: var(--shadow-2); }
-.login-top { display: flex; justify-content: space-between; align-items: center; }
-.login h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.03em; }
-.login .lang button { color: var(--muted); border-color: var(--border); }
+/* ══ Логин — орбитальная сцена ═════════════════════════════════════════════
+   Разметка/CSS/анимации 1:1 из утверждённого макета .design-lab/lab8.html
+   («Орбиты · развитие» — финальный вариант логина из итераций lab2–8:
+   ядро + 3 орбиты с бейджами доменов + искры + стеклянная форма).
+   Сцена — самодостаточная «картина»: фон лабы (#02040a) темнее токена --bg;
+   warn-стеклянные/искровые оттенки хардкодом — в tokens.css нет --warn-rgb.
+   Кейфреймы с префиксом login- — без коллизий с глобальными (pulse, fadein). */
+.login-scene { position: relative; height: 100vh; overflow: hidden; background: #02040a; color: var(--text); font-family: var(--sans); }
+
+/* центральный пульс-ядро */
+.login-scene .core {
+  position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 24px 4px rgba(62,199,255,.55), 0 0 80px 20px rgba(62,199,255,.15);
+  animation: login-corpulse 3s ease-in-out infinite; z-index: 1;
+}
+@keyframes login-corpulse { 50% { transform: scale(1.5); box-shadow: 0 0 34px 8px rgba(62,199,255,.65), 0 0 110px 30px rgba(62,199,255,.2); } }
+
+/* кольца-риплы от ядра */
+.login-scene .ring {
+  position: absolute; left: 50%; top: 50%; border-radius: 50%;
+  border: 1px solid rgba(62,199,255,.3); width: 340px; height: 340px; margin: -170px 0 0 -170px;
+  animation: login-ripple 5s cubic-bezier(.2,.6,.35,1) infinite;
+}
+@keyframes login-ripple { from { transform: scale(.3); opacity: .85; } to { transform: scale(2.6); opacity: 0; } }
+
+/* статичные направляющие орбиты */
+.login-scene .orbit { position: absolute; left: 50%; top: 50%; border-radius: 50%; border: 1px dashed rgba(62,199,255,.14); transform: translate(-50%,-50%); }
+.login-scene .orbit.o1 { width: 440px; height: 440px; }
+.login-scene .orbit.o2 { width: 680px; height: 680px; }
+.login-scene .orbit.o3 { width: 940px; height: 940px; border-color: rgba(62,199,255,.09); }
+
+/* спутники-домены: контейнер едет по орбите, бейдж — контр-вращением остаётся
+   читаемым. satpos держит статичный угол --a (в лабе — инлайн-хак со
+   вращением; здесь то же намерение без наложения анимаций). */
+.login-scene .satwrap { position: absolute; animation: login-spin linear infinite; transform-origin: center; }
+.login-scene .satwrap.w1 { width: 440px; height: 440px; left: 50%; top: 50%; margin: -220px 0 0 -220px; animation-duration: 18s; }
+.login-scene .satwrap.w2 { width: 680px; height: 680px; left: 50%; top: 50%; margin: -340px 0 0 -340px; animation-duration: 31s; animation-direction: reverse; }
+.login-scene .satwrap.w3 { width: 940px; height: 940px; left: 50%; top: 50%; margin: -470px 0 0 -470px; animation-duration: 48s; }
+@keyframes login-spin { to { transform: rotate(360deg); } }
+.login-scene .satpos { position: absolute; inset: 0; transform: rotate(var(--a, 0deg)); pointer-events: none; }
+.login-scene .sat {
+  position: absolute; left: 50%; top: 0; font-family: var(--mono); font-size: 11px; color: rgba(62,199,255,.85);
+  background: rgba(12,18,25,.92); border: 1px solid rgba(62,199,255,.3); border-radius: 5px; padding: 3px 9px; white-space: nowrap;
+  box-shadow: 0 0 16px rgba(62,199,255,.2);
+  animation: login-counterspin linear infinite;
+}
+@keyframes login-counterspin {
+  from { transform: translate(-50%,-50%) rotate(calc(-1 * var(--a, 0deg))); }
+  to { transform: translate(-50%,-50%) rotate(calc(-1 * var(--a, 0deg) - 360deg)); }
+}
+/* длительность контр-вращения = длительности обёртки; для w2 бейдж warn */
+.login-scene .w1 .sat { animation-duration: 18s; }
+.login-scene .w2 .sat { animation-duration: 31s; animation-direction: reverse; color: var(--warn); border-color: rgba(255,197,61,.35); box-shadow: 0 0 16px rgba(255,197,61,.15); }
+.login-scene .w3 .sat { animation-duration: 48s; color: var(--muted); border-color: var(--border); box-shadow: none; font-size: 10px; }
+
+/* летящие искры-запросы (от орбит к ядру). В лабе .query без left/top вставал
+   в статичную позицию (угол контейнера) и летел в угол; генератор лабы считает
+   --fx/--fy от центра (cos/sin) — здесь сцена от центра, как задумано. */
+.login-scene .query {
+  position: absolute; left: 50%; top: 50%; margin: -2px 0 0 -2px; width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 8px rgba(62,199,255,.8); opacity: 0; animation: login-fly 2.6s cubic-bezier(.3,.7,.4,1) infinite;
+}
+@keyframes login-fly {
+  0% { opacity: 0; transform: translate(var(--fx), var(--fy)) scale(.6); }
+  12% { opacity: 1; }
+  55% { opacity: 1; }
+  100% { opacity: 0; transform: translate(0, 0) scale(.4); }
+}
+.login-scene .query.q2 { animation-delay: .9s; background: var(--warn); box-shadow: 0 0 8px rgba(255,197,61,.8); }
+.login-scene .query.q3 { animation-delay: 1.7s; }
+.login-scene .query.q4 { animation-delay: 2.3s; background: #9dff8f; box-shadow: 0 0 8px rgba(157,255,143,.8); }
+
+/* стеклянная карточка входа */
+.login-card {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 10;
+  width: min(400px, 92vw); background: rgba(12,18,25,.85); backdrop-filter: blur(14px);
+  border: 1px solid var(--border); border-radius: 16px; padding: 28px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.65), 0 0 0 1px rgba(62,199,255,.04), inset 0 1px 0 rgba(255,255,255,.06);
+  animation: login-fadein .3s ease-out;
+}
+@keyframes login-fadein { from { opacity: 0; } to { opacity: 1; } }
+.login-card .logo { font-family: var(--mono); font-weight: 700; font-size: 20px; margin-bottom: 16px; }
+.login-card .logo b { color: var(--accent); text-shadow: 0 0 14px rgba(62,199,255,.5); }
+.login-card .lead { font-size: 12.5px; color: var(--muted); margin: 0 0 18px; }
+.login-card .f label {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); display: block; margin-bottom: 4px;
+}
+.login-card .f input {
+  width: 100%; background: rgba(255,255,255,.03); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 11px; font-family: var(--mono); font-size: 13px; margin-bottom: 12px; outline: none;
+}
+.login-card .f input:focus { border-color: rgba(62,199,255,.5); box-shadow: 0 0 0 3px rgba(62,199,255,.12); }
+.login-card .f .btn {
+  width: 100%; font-family: var(--mono); font-size: 13px; background: var(--accent); color: var(--accent-ink);
+  border: 0; border-radius: 6px; padding: 9px; font-weight: 700; cursor: pointer;
+}
+.login-card .f .btn:disabled { opacity: .6; cursor: default; }
+.login-card .f .hint { font-family: var(--mono); font-size: 10px; color: rgba(62,199,255,.55); letter-spacing: .06em; margin: 10px 0 0; }
+.login-card .langrow { display: flex; justify-content: flex-end; margin-top: 14px; }
+.login-card .lang button { font-family: var(--mono); font-size: 10.5px; color: var(--muted); border-color: var(--border); }
+.login-card .lang button.on { color: var(--accent); border-color: rgba(62,199,255,.5); }
+
+/* OAuth-провайдеры (фаза 1 — только отрисовка, список пуст при 404) */
+.login-card .oauth { margin: 0 0 12px; }
+.login-card .oauth-lead {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); display: block; margin-bottom: 6px;
+}
+.login-card .oauth-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.login-card .oauth-btn {
+  flex: 1; font-family: var(--mono); font-size: 11px; background: rgba(255,255,255,.03); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; cursor: pointer;
+}
+.login-card .oauth-btn:hover { border-color: rgba(62,199,255,.5); color: var(--accent); }
 
 .meters { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-2); }
 .meter { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-m); padding: var(--space-3) var(--space-4); box-shadow: var(--shadow-1); }
