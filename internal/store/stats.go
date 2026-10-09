@@ -199,6 +199,7 @@ func (s *Store) ACLRulesStats(ctx context.Context) ([]RuleHit, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	type block struct {
 		addr netip.Addr
 		n    int64
