@@ -20,6 +20,9 @@ export function I18nProvider({ children }) {
   }
   function t(key, vars) {
     let text = dicts[lang][key] ?? dicts.en[key] ?? key;
+    // A few strings need live agreement (e.g. ru plurals) — dicts may hold a
+    // function of the vars instead of a ready-made template.
+    if (typeof text === "function") return text(vars ?? {}, lang);
     if (vars) {
       for (const [name, value] of Object.entries(vars)) {
         text = text.replaceAll(`{${name}}`, value);

@@ -345,7 +345,13 @@ export const dict = {
     confirmYes: "Да, сделать",
     cancel: "Отмена",
     reset: "Сбросить",
-    unsaved: "изменено полей: {n}",
+    // Лаба 12: «● 1 поле изменено» — русское согласование живёт функцией (поле/поля/полей).
+    unsaved: ({ n = 0 } = {}) => {
+      const num = Number(n) || 0, k = num % 10, h = num % 100;
+      const few = [2, 3, 4].includes(k) && !(h >= 12 && h <= 14);
+      const one = k === 1 && h !== 11;
+      return `${num} ${one ? "поле" : few ? "поля" : "полей"} ${few ? "изменены" : "изменено"}`;
+    },
     newDomain: "Новый домен",
     groups: "Группы",
     allGroups: "Все домены",

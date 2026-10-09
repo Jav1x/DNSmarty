@@ -167,7 +167,7 @@ export function Access() {
         <table>
           <thead><tr>
             <th>{t("ruleCol")} <span className="ar">▾</span></th>
-            <th>{t("actSect")}</th>
+            <th>{t("type")}</th>
             <th>{t("label")}</th>
             <th style={{ textAlign: "right" }}>{t("hits24")}</th>
             <th></th>
@@ -176,7 +176,9 @@ export function Access() {
             {data === null && <SkeletonRows cols={5} rows={3} />}
             {data !== null && filtered.map((c) => {
               const kind = c.list_kind || "allow";
-              const hit = hits && c.id in hits ? hits[c.id] : null;
+              // Эндпоинт молчит о выключенных правилах (и о правилах без попаданий) —
+              // когда он ответил, лаба 12 показывает «0», «—» остаётся только при сбое.
+              const hit = hits === null ? null : (hits[c.id] ?? 0);
               return (
                 <tr key={c.id} className="click" onClick={(e) => { if (!e.target.closest("button")) openEditor(c); }}>
                   <td>
