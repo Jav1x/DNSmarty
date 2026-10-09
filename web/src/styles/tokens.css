@@ -1,97 +1,37 @@
-/* Design tokens. Semantic vars (--bg, --surface, ...) are what components use;
-   the palette scales only feed them. Dark theme overrides the semantic layer. */
+/* «Лёд+» design tokens — spec §3 (docs/superpowers/specs/2026-10-09-ui-redesign-design.md).
+   Тёмная тема — единственная. Единственный источник семантических переменных.
+   Отступление от спека: имена --mono/--sans несут суффикс Variable — так регистрируют
+   семейства пакеты @fontsource-variable (спец-имена оставлены в цепочке фолбэков). */
 :root {
-  /* gray scale */
-  --gray-0: #ffffff;
-  --gray-50: #f6f8f9;
-  --gray-100: #eef1f4;
-  --gray-200: #e2e6eb;
-  --gray-300: #cdd4da;
-  --gray-400: #9aa3ad;
-  --gray-500: #66707a;
-  --gray-600: #4a525b;
-  --gray-700: #333a42;
-  --gray-800: #232a31;
-  --gray-900: #161b21;
+  --bg:#05070b; --surface:#0c1219; --text:#eef4f9; --muted:#8b99a8;
+  --border:rgba(255,255,255,.08);
+  --accent:#3ec7ff; --accent-ink:#02090f; --accent-rgb:62,199,255;
+  --warn:#ffc53d; --danger:#ff5c5c; --info:#38bdf8; --ok:#7ee2a8;
+  --mono:"JetBrains Mono Variable","JetBrains Mono",ui-monospace,monospace;
+  --sans:"Manrope Variable","Manrope",system-ui,sans-serif;
+  --r-m:10px;
+  color-scheme: dark;
 
-  /* accent + status */
-  --green-100: #e8f6ec;
-  --green-500: #67b279;
-  --green-600: #4c9661;
-  --green-700: #1f6b38;
-  --red-100: #fdecec;
-  --red-500: #d24b4b;
-  --red-700: #a83232;
-  --amber-100: #fdf3e0;
-  --amber-500: #d99a2b;
-
-  /* semantic: light theme */
-  --bg: var(--gray-50);
-  --surface: var(--gray-0);
-  --surface-2: var(--gray-100);
-  --text: var(--gray-800);
-  --muted: var(--gray-500);
-  --border: var(--gray-200);
-  --accent: var(--green-600);
-  --accent-ink: #ffffff;
-  --accent-soft: var(--green-100);
-  --accent-deep: var(--green-700);
-  --danger: var(--red-500);
-  --danger-deep: var(--red-700);
-  --danger-soft: var(--red-100);
-  --warn-soft: var(--amber-100);
-  --side-bg: var(--gray-800);
-  --side-bg-2: var(--gray-700);
-  --side-text: var(--gray-100);
-  --side-muted: var(--gray-400);
-  --focus-ring: var(--green-500);
-
-  --shadow-1: 0 1px 2px rgba(22, 27, 33, 0.06);
-  --shadow-2: 0 4px 14px rgba(22, 27, 33, 0.08);
-  --shadow-3: 0 18px 50px rgba(22, 27, 33, 0.22);
-
-  --radius-s: 6px;
-  --radius-m: 10px;
-  --radius-l: 14px;
-
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 22px;
-  --space-6: 32px;
-
-  --font-sans: "Source Sans 3", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --fs-s: 13px;
-  --fs-m: 15px;
-  --fs-l: 17px;
+  /* ── Legacy bridge (временный) ────────────────────────────────────────────
+     Старые страницы (до их перерисовки в задачах 5–12) продолжают ссылаться
+     на прежние имена переменных. Каждое значение здесь — из «Лёд+» или из
+     прежней тёмной темы; по мере переписывания страниц секция удаляется. */
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+  --fs-s: 11px; --fs-m: 14px; --fs-l: 17px;
+  --radius-s: 6px; --radius-m: var(--r-m); --radius-l: 16px;
+  --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 22px; --space-6: 32px;
+  --surface-2: rgba(255,255,255,.03);
+  --accent-soft: rgba(62,199,255,.08);
+  --accent-deep: var(--accent);
+  --danger-deep: var(--danger);
+  --danger-soft: rgba(255,92,92,.06);
+  --warn-soft: rgba(255,197,61,.06);
+  --focus-ring: var(--accent);
+  --side-bg: #10141a; --side-bg-2: #1e252d;
+  --side-text: var(--text); --side-muted: var(--muted);
+  --shadow-1: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-2: 0 4px 14px rgba(0,0,0,.45);
+  --shadow-3: 0 18px 50px rgba(0,0,0,.6);
+  --gray-300: rgba(139,153,168,.5);
 }
-
-:root[data-theme="dark"] {
-  --bg: #12161b;
-  --surface: #1a2027;
-  --surface-2: #232b33;
-  --text: #e4e8ec;
-  --muted: #96a0aa;
-  --border: #2c353e;
-  --accent: var(--green-500);
-  --accent-ink: #10241a;
-  --accent-soft: #1d3327;
-  --accent-deep: #8fd0a2;
-  --danger: #e06c6c;
-  --danger-deep: #f0a2a2;
-  --danger-soft: #3a2325;
-  --warn-soft: #372c1a;
-  --side-bg: #10141a;
-  --side-bg-2: #1e252d;
-  --side-text: var(--gray-100);
-  --side-muted: var(--gray-400);
-
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.45);
-  --shadow-3: 0 18px 50px rgba(0, 0, 0, 0.6);
-}
-
-:root[data-theme="dark"] { color-scheme: dark; }
-:root[data-theme="light"] { color-scheme: light; }

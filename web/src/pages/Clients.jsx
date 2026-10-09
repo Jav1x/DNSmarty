@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import { Err, StatusLamp, SkeletonRows } from "../components/Bits";
-import { Switch } from "../components/Switch";
+import { Switch } from "../ui/Switch";
 import { useConfirm, useToast } from "../components/Toast";
 
 export function Clients() {
@@ -68,7 +68,7 @@ export function Clients() {
           <section className="mod" key={kind}>
             <div className="toolbar">
               <h2>{title}</h2>
-              <Switch checked={on} onChange={toggle} label={`${title}: ${on ? t("enabled") : t("listDisabled")}`} />
+              <Switch on={on} onChange={toggle} label={`${title}: ${on ? t("enabled") : t("listDisabled")}`} />
             </div>
             <div className={on ? "" : "block-off"} aria-disabled={!on}>
               <form onSubmit={(event) => create(kind, event)}>
