@@ -1,11 +1,6 @@
 import * as RD from "@radix-ui/react-dialog"
 import { useI18n } from "../i18n"
 
-/** Radix Dialog в классах лаб (ui.css): .modal-back/.modal/.mhead/.mfoot.
-    footer — правый блок кнопок футера (типично <TrashButton/> + Отмена/Сохранить);
-    слева в футере — note (например dirty-счётчик). Ширина — width (px, по умолчанию 560;
-    lab10: 860 для нод, lab15: 820 для сервиса). Закрытие: Esc, клик по подложке, ✕ —
-    единый путь onOpenChange. Скролллок делает Radix (react-remove-scroll). */
 export default function Modal({ open, onClose, title, children, footer, note, width = 560 }) {
   const { t } = useI18n()
   return (

@@ -1,7 +1,5 @@
 import { useI18n } from "../i18n"
 
-/** Sticky-сейвбар настроек (lab13): слева счётчик «● N полей изменено»,
-    справа «Сбросить»/«Сохранить» (грязный режим — янтарная подсветка .unsaved). */
 export default function Savebar({ dirty = false, count = 0, reset, save, children }) {
   const { t } = useI18n()
   return (

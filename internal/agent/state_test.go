@@ -9,7 +9,7 @@ import (
 func TestSnapshotRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	if _, ok := LoadSnapshot(dir, "dns"); ok {
-		t.Fatal("пустой каталог что-то вернул")
+		t.Fatal("empty dir returned a snapshot")
 	}
 	body := []byte(`{"version":7}`)
 	if err := SaveSnapshot(dir, "dns", body); err != nil {
@@ -21,7 +21,7 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	}
 	// The other role is a separate file.
 	if _, ok := LoadSnapshot(dir, "proxy"); ok {
-		t.Fatal("роли перепутаны")
+		t.Fatal("roles mixed up")
 	}
 	// A second save replaces the first and leaves no temporary files.
 	if err := SaveSnapshot(dir, "dns", []byte(`{"version":8}`)); err != nil {
@@ -29,14 +29,14 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	}
 	got, _ = LoadSnapshot(dir, "dns")
 	if string(got) != `{"version":8}` {
-		t.Fatalf("не перезаписался: %q", got)
+		t.Fatalf("not overwritten: %q", got)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(entries) != 1 || entries[0].Name() != "dns.json" {
-		t.Fatalf("лишние файлы: %v", entries)
+		t.Fatalf("extra files: %v", entries)
 	}
 }
 
@@ -50,14 +50,14 @@ func TestSnapshotFileMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st.Mode().Perm() != 0o600 {
-		t.Fatalf("права: %v", st.Mode().Perm())
+		t.Fatalf("mode: %v", st.Mode().Perm())
 	}
 	di, err := os.Stat(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if di.Mode().Perm() != 0o700 {
-		t.Fatalf("права каталога: %v", di.Mode().Perm())
+		t.Fatalf("dir mode: %v", di.Mode().Perm())
 	}
 }
 
@@ -68,13 +68,13 @@ func TestSnapshotCorruptIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := LoadSnapshot(dir, "dns"); ok {
-		t.Fatal("пустой файл принят за снимок")
+		t.Fatal("empty file accepted as snapshot")
 	}
 	// No directory configured means no persistence, not an error.
 	if err := SaveSnapshot("", "dns", []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := LoadSnapshot("", "dns"); ok {
-		t.Fatal("без каталога что-то вернулось")
+		t.Fatal("missing dir returned a snapshot")
 	}
 }

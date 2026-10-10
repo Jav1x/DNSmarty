@@ -74,13 +74,13 @@ func TestTOTPLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Contains(ct, []byte(begun.Secret)) || len(ct) == 0 {
-		t.Fatal("секрет не должен лежать в базе открытым текстом")
+		t.Fatal("secret must not be stored in plaintext")
 	}
 
 	now := time.Now()
 	wrong := postAuthJSON(t, ts.URL, "/api/account/2fa/enable", `{"code":"000000"}`, sess, http.StatusBadRequest)
 	if !bytes.Contains(wrong, []byte(`"code"`)) {
-		t.Fatalf("чужой код: %s", wrong)
+		t.Fatalf("wrong code: %s", wrong)
 	}
 
 	code, err := totp.GenerateCode(begun.Secret, now)
@@ -92,11 +92,11 @@ func TestTOTPLogin(t *testing.T) {
 		Codes []string `json:"codes"`
 	}
 	if err := json.Unmarshal(enabled, &en); err != nil || len(en.Codes) != 8 {
-		t.Fatalf("коды: %s", enabled)
+		t.Fatalf("codes: %s", enabled)
 	}
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'totp.enable'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("totp.enable в аудите: %d %v", n, err)
+		t.Fatalf("totp.enable in audit: %d %v", n, err)
 	}
 
 	listed := getAuthJSON(t, ts.URL+"/api/account/2fa/codes", sess)
@@ -108,8 +108,11 @@ func TestTOTPLogin(t *testing.T) {
 			Used bool   `json:"used"`
 		} `json:"codes"`
 	}
-	if err := json.Unmarshal(listed, &list); err != nil || !list.Enabled || len(list.Codes) != 8 || list.Codes[0].Code == "" {
-		t.Fatalf("список кодов: %s", listed)
+	if err := json.Unmarshal(listed, &list); err != nil || !list.Enabled || len(list.Codes) != 8 || list.Codes[0].ID == "" || list.Codes[0].Code != "" {
+		t.Fatalf("code list without plaintext: %s", listed)
+	}
+	if bytes.Contains(listed, []byte(en.Codes[0])) {
+		t.Fatalf("list returned a plaintext code: %s", listed)
 	}
 	postAuthJSON(t, ts.URL, "/api/account/2fa/codes/"+list.Codes[0].ID, `{}`, sess, http.StatusOK)
 	after := getAuthJSON(t, ts.URL+"/api/account/2fa/codes", sess)
@@ -120,16 +123,16 @@ func TestTOTPLogin(t *testing.T) {
 		} `json:"codes"`
 	}
 	if err := json.Unmarshal(after, &spent); err != nil || !spent.Codes[0].Used || spent.Codes[0].Code != "" {
-		t.Fatalf("после клика код должен быть погашен: %s", after)
+		t.Fatalf("after click the code must be spent: %s", after)
 	}
 
 	status, raw, cookies := postJSON(t, ts.URL+"/api/login", `{"username":"admin","password":"panel-pass-long"}`)
 	if status != http.StatusOK || bytes.Contains(raw, []byte(`"csrf"`)) {
-		t.Fatalf("пароль при включённой 2FA не должен выдавать сессию: %d %s", status, raw)
+		t.Fatalf("password with 2FA on must not issue a session: %d %s", status, raw)
 	}
 	for _, c := range cookies {
 		if c.Name == "dnsmarty" {
-			t.Fatal("cookie сессии пришёл до кода")
+			t.Fatal("session cookie arrived before the code")
 		}
 	}
 	var challenge struct {
@@ -137,11 +140,11 @@ func TestTOTPLogin(t *testing.T) {
 		Ticket   string `json:"ticket"`
 	}
 	if err := json.Unmarshal(raw, &challenge); err != nil || !challenge.Required || challenge.Ticket == "" {
-		t.Fatalf("билет: %s", raw)
+		t.Fatalf("ticket: %s", raw)
 	}
 	status, _, _ = postJSON(t, ts.URL+"/api/login/totp", `{"ticket":"`+challenge.Ticket+`","code":"`+code+`"}`)
 	if status != http.StatusUnauthorized {
-		t.Fatalf("код включения повторно: %d, ждём 401", status)
+		t.Fatalf("setup code reused: %d, want 401", status)
 	}
 	next, err := totp.GenerateCode(begun.Secret, now.Add(30*time.Second))
 	if err != nil {
@@ -149,20 +152,20 @@ func TestTOTPLogin(t *testing.T) {
 	}
 	status, raw, cookies = postJSON(t, ts.URL+"/api/login/totp", `{"ticket":"`+challenge.Ticket+`","code":"`+next+`"}`)
 	if status != http.StatusOK {
-		t.Fatalf("следующий код: %d %s", status, raw)
+		t.Fatalf("next code: %d %s", status, raw)
 	}
 	if !hasSessionCookie(cookies) {
-		t.Fatal("после верного кода нет сессии")
+		t.Fatal("no session after a valid code")
 	}
 
 	backup := en.Codes[1]
 	status, raw, _ = postJSON(t, ts.URL+"/api/login", `{"username":"admin","password":"panel-pass-long"}`)
 	if err := json.Unmarshal(raw, &challenge); err != nil || status != http.StatusOK {
-		t.Fatalf("второй вход: %d %s", status, raw)
+		t.Fatalf("second sign-in: %d %s", status, raw)
 	}
 	status, raw, cookies = postJSON(t, ts.URL+"/api/login/totp", `{"ticket":"`+challenge.Ticket+`","code":"`+backup+`"}`)
 	if status != http.StatusOK || !hasSessionCookie(cookies) {
-		t.Fatalf("резервный код: %d %s", status, raw)
+		t.Fatalf("backup code: %d %s", status, raw)
 	}
 	status, raw, _ = postJSON(t, ts.URL+"/api/login", `{"username":"admin","password":"panel-pass-long"}`)
 	if err := json.Unmarshal(raw, &challenge); err != nil {
@@ -170,18 +173,17 @@ func TestTOTPLogin(t *testing.T) {
 	}
 	status, _, _ = postJSON(t, ts.URL+"/api/login/totp", `{"ticket":"`+challenge.Ticket+`","code":"`+backup+`"}`)
 	if status != http.StatusUnauthorized {
-		t.Fatalf("повтор резервного кода: %d, ждём 401", status)
+		t.Fatalf("backup code reused: %d, want 401", status)
 	}
 
-	// Пять промахов сжигают билет даже если шестой код верный.
 	status, raw, _ = postJSON(t, ts.URL+"/api/login", `{"username":"admin","password":"panel-pass-long"}`)
 	if err := json.Unmarshal(raw, &challenge); err != nil || status != http.StatusOK {
-		t.Fatalf("билет на промахи: %d %s", status, raw)
+		t.Fatalf("ticket for misses: %d %s", status, raw)
 	}
 	burn := now.Add(60 * time.Second)
 	for i := 0; i < 5; i++ {
 		if _, _, err := st.RedeemLoginTicket(ctx, challenge.Ticket, "000000", burn); err == nil {
-			t.Fatal("пустой код не должен проходить")
+			t.Fatal("empty code must not pass")
 		}
 	}
 	later, err := totp.GenerateCode(begun.Secret, burn)
@@ -189,17 +191,17 @@ func TestTOTPLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := st.RedeemLoginTicket(ctx, challenge.Ticket, later, burn); err == nil {
-		t.Fatal("после пяти промахов билет должен умереть")
+		t.Fatal("ticket must die after five misses")
 	}
 
 	postAuthJSON(t, ts.URL, "/api/account/2fa/disable", `{"password":"wrong-password-here"}`, sess, http.StatusBadRequest)
 	postAuthJSON(t, ts.URL, "/api/account/2fa/disable", `{"password":"panel-pass-long"}`, sess, http.StatusOK)
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'totp.disable'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("totp.disable в аудите: %d %v", n, err)
+		t.Fatalf("totp.disable in audit: %d %v", n, err)
 	}
 	sess = login(t, ts.URL, "admin", "panel-pass-long")
 	if sess.csrf == "" {
-		t.Fatal("после выключения 2FA вход снова сразу создаёт сессию")
+		t.Fatal("after 2FA off, password sign-in must create a session")
 	}
 }
 
@@ -219,7 +221,7 @@ func postAuthJSON(t *testing.T, base, path, body string, sess session, want int)
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != want {
-		t.Fatalf("%s %s: %d %s, ждём %d", http.MethodPost, path, resp.StatusCode, raw, want)
+		t.Fatalf("%s %s: %d %s, want %d", http.MethodPost, path, resp.StatusCode, raw, want)
 	}
 	return raw
 }

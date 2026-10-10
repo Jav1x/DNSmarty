@@ -39,7 +39,7 @@ func main() {
 func migrateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "migrate",
-		Short: "Применить SQL-миграции",
+		Short: "Apply SQL migrations",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dsn, err := config.Must("DATABASE_URL")
 			if err != nil {
@@ -53,7 +53,7 @@ func migrateCmd() *cobra.Command {
 func panelCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "panel",
-		Short: "API и UI, единственный писатель в Postgres",
+		Short: "API and UI; the only Postgres writer",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dsn, err := config.Must("DATABASE_URL")
 			if err != nil {
@@ -138,7 +138,7 @@ func panelCmd() *cobra.Command {
 func dnsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "dns",
-		Short: "Резолвер: 53, DoT и DoH через один Decide",
+		Short: "Resolver: 53, DoT and DoH through one Decide",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			nodeKey, err := nodeKey()
 			if err != nil {
@@ -167,7 +167,7 @@ func dnsCmd() *cobra.Command {
 			eng.SetForwardLimit(envInt("DNS_FORWARD_MAX", 512))
 			stateDir := envDefault("STATE_DIR", "/var/lib/dnsmarty")
 			if !agent.Restore(stateDir, snapshot.RoleDNS, func(body []byte) error { return agent.ApplyDNS(body, eng) }) {
-				slog.Info("dns", "state", "нет сохранённого снимка")
+				slog.Info("dns", "state", "no saved snapshot")
 			}
 			stats := &agent.Stats{}
 			go agent.Collect(ctx, stats, eng.Hits(), nil)
@@ -202,7 +202,7 @@ func dnsCmd() *cobra.Command {
 func proxyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "proxy",
-		Short: "SNI splice без терминации TLS",
+		Short: "SNI splice without terminating TLS",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			nodeKey, err := nodeKey()
 			if err != nil {
@@ -215,7 +215,7 @@ func proxyCmd() *cobra.Command {
 			srv.SetMaxConns(envInt("PROXY_MAX_CONNS", 4096))
 			stateDir := envDefault("STATE_DIR", "/var/lib/dnsmarty")
 			if !agent.Restore(stateDir, snapshot.RoleProxy, func(body []byte) error { return agent.ApplyProxy(body, srv) }) {
-				slog.Info("proxy", "state", "нет сохранённого снимка")
+				slog.Info("proxy", "state", "no saved snapshot")
 			}
 			stats := &agent.Stats{}
 			go agent.Collect(ctx, stats, nil, srv.Reports())

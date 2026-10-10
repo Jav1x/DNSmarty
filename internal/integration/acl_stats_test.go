@@ -21,15 +21,6 @@ import (
 	"dnsmarty/internal/store"
 )
 
-/*
-Тест агрегата «заблокировано 24ч»: dns_hit с decision='acl' за сутки
-
-	раскладывается по включённым правилам client_cidr (netip-попадание IP в CIDR).
-	Проверки: счётчики по /32 и /24; выключенное правило молчит; старые (>24ч)
-	и не-acl записи не считаются; при нуле правил — пустой срез и "rules":[]
-	в JSON эндпоинта (не null и не ошибка); контракт лимита — 201 включённое
-	правило даёт ровно 200 записей (aclRulesLimit).
-*/
 func TestACLRulesStats(t *testing.T) {
 	ctx := context.Background()
 	pg, err := postgres.Run(ctx, "postgres:16",
@@ -63,21 +54,18 @@ func TestACLRulesStats(t *testing.T) {
 
 	node := seedNode(t, ctx, pool)
 
-	// Ноль правил: пустой срез (не nil), а эндпоинт отдаёт "rules":[].
 	empty, err := st.ACLRulesStats(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if empty == nil || len(empty) != 0 {
-		t.Fatalf("без правил ждём пустой срез: %v", empty)
+		t.Fatalf("no rules: want empty slice: %v", empty)
 	}
 	emptyJSON := aclStatsJSON(t, st)
-	// json.Encoder добавляет \n — сравниваем после TrimSpace.
 	if strings.TrimSpace(emptyJSON) != `{"rules":[]}` {
-		t.Fatalf("пустой JSON не []: %s", emptyJSON)
+		t.Fatalf("empty JSON is not []: %s", emptyJSON)
 	}
 
-	// Правила: /32 (deny), /24 (allow) — оба включены; /8 выключено.
 	if err := st.CreateClient(ctx, "test", "198.51.100.7/32", "scanner", "deny", true); err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +80,9 @@ func TestACLRulesStats(t *testing.T) {
 		ids[c.CIDR] = c.ID
 	}
 	if len(ids) != 3 {
-		t.Fatalf("правила не создались: %v", ids)
+		t.Fatalf("rules were not created: %v", ids)
 	}
 
-	// Хиты: 198.51.100.7 → правило /32 (2), 203.0.113.42 → /24 (3),
-	// 192.0.2.5 → ни в одно (1), 10.5.5.5 → только в выключенное /8 (1).
-	// Шум: forward-запись того же IP и acl-запись старше 24 часов не считаются.
 	now := time.Now().UTC()
 	for _, h := range []store.DNSHit{
 		{At: now, ClientIP: "198.51.100.7", QName: "a.test.", Decision: "acl"},
@@ -123,26 +108,25 @@ func TestACLRulesStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out == nil {
-		t.Fatal("с правилами ждём срез, не nil")
+		t.Fatal("with rules want a slice, not nil")
 	}
 	got := map[string]int64{}
 	for _, r := range out {
 		got[r.ID] = r.Hits
 	}
 	if len(out) != 2 {
-		t.Fatalf("ждём 2 включённых правила: %+v", out)
+		t.Fatalf("want 2 enabled rules: %+v", out)
 	}
 	if got[ids["198.51.100.7/32"]] != 2 {
-		t.Fatalf("/32: %d (хотим 2)", got[ids["198.51.100.7/32"]])
+		t.Fatalf("/32: %d (want 2)", got[ids["198.51.100.7/32"]])
 	}
 	if got[ids["203.0.113.0/24"]] != 3 {
-		t.Fatalf("/24: %d (хотим 3)", got[ids["203.0.113.0/24"]])
+		t.Fatalf("/24: %d (want 3)", got[ids["203.0.113.0/24"]])
 	}
 	if _, other := got[ids["10.0.0.0/8"]]; other {
-		t.Fatal("выключенное правило попало в статистику")
+		t.Fatal("disabled rule appeared in stats")
 	}
 
-	// Эндпоинт: {rules:[{id,hits}]} тем же счётчикам.
 	rulesJSON := aclStatsJSON(t, st)
 	var body struct {
 		Rules []store.RuleHit `json:"rules"`
@@ -151,19 +135,14 @@ func TestACLRulesStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(body.Rules) != 2 {
-		t.Fatalf("эндпоинт: %s", rulesJSON)
+		t.Fatalf("endpoint: %s", rulesJSON)
 	}
 	for _, r := range body.Rules {
 		if want := got[r.ID]; r.Hits != want {
-			t.Fatalf("эндпоинт %s: %d (хотим %d)", r.ID, r.Hits, want)
+			t.Fatalf("endpoint %s: %d (want %d)", r.ID, r.Hits, want)
 		}
 	}
 
-	// Лимит контракта: aclRulesLimit = 200 включённых правил. Досыпаем 199
-	// разрешённых deny-правил (192.168.N.0/24 — мимо всех хитовых IP), всего
-	// 201 включённое. ORDER BY list_kind, cidr ставит allow и младшие CIDR
-	// раньше, поэтому ровно 200 записей, а вытесненным оказывается /32 deny —
-	// последний по сортировке.
 	for n := 0; n < 199; n++ {
 		cidr := fmt.Sprintf("192.168.%d.0/24", n)
 		if err := st.CreateClient(ctx, "test", cidr, "filler", "deny", true); err != nil {
@@ -175,20 +154,19 @@ func TestACLRulesStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(capped) != 200 {
-		t.Fatalf("лимит: %d записей (хотим ровно 200 из 201 включённого)", len(capped))
+		t.Fatalf("cap: %d rows (want exactly 200 of 201 enabled)", len(capped))
 	}
 	cappedHits := map[string]int64{}
 	for _, r := range capped {
 		cappedHits[r.ID] = r.Hits
 	}
 	if cappedHits[ids["203.0.113.0/24"]] != 3 {
-		t.Fatalf("лимит вытеснил /24: %d (хотим 3)", cappedHits[ids["203.0.113.0/24"]])
+		t.Fatalf("cap dropped /24: %d (want 3)", cappedHits[ids["203.0.113.0/24"]])
 	}
 	if _, inside := cappedHits[ids["198.51.100.7/32"]]; inside {
-		t.Fatal("/32 deny должен быть вытеснен лимитом (последний по ORDER BY list_kind, cidr)")
+		t.Fatal("/32 deny must be dropped by the cap (last by ORDER BY list_kind, cidr)")
 	}
 
-	// Эндпоинт под лимитом: те же 200 записей.
 	cappedJSON := aclStatsJSON(t, st)
 	var cappedBody struct {
 		Rules []store.RuleHit `json:"rules"`
@@ -197,7 +175,7 @@ func TestACLRulesStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(cappedBody.Rules) != 200 {
-		t.Fatalf("эндпоинт под лимитом: %d записей (хотим 200)", len(cappedBody.Rules))
+		t.Fatalf("capped endpoint: %d rows (want 200)", len(cappedBody.Rules))
 	}
 }
 

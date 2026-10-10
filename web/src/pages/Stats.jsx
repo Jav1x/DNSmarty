@@ -1,20 +1,8 @@
-// Статистика (лаба 16): пилюли окон 1ч/6ч/24ч/всё, карточки «Топ доменов» и
-// «Прокси · трафик по SNI» в сетке 1.25fr/1fr, «Клиенты» на всю ширину с
-// drill-down «Домены клиента {ip}» (клик по строке или прямой ввод IP).
-//
-// Контракт (проверен по internal/panel/server.go и api.go, все GET):
-//   GET /api/stats?window=1h|6h|24h|all → { window, domains:[{name,queries,acl,clients}],
-//                                            clients:[{ip,queries,acl}], proxy:[{name,sessions,bytes}] }
-//   GET /api/stats/client?ip=…&window=… → { rows:[{name,queries,acl}] }
-// window: 1h | 6h | 24h | all; all — весь retention.
-// Ошибку неверного IP отдаёт сервер (400, field IP) — показываем через Err.
-//
-// usePoll(30 с) и тикер «N с назад» чистятся в cleanup своих эффектов;
-// у ClientDrill таймеров нет — только useLoad, который перезагружается по path.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLoad, usePoll } from "../hooks/useLoad";
 import { useI18n } from "../i18n";
 import { EmptyRow, Err, SkeletonRows } from "../components/Bits";
+import { sortRows } from "../lib/logsfilters";
 import { cleanClientIp, clientStatsPath, fmtBytes, shares, statsPath } from "../lib/util";
 
 const POLL_MS = 30000;
@@ -43,19 +31,31 @@ function WindowPills({ value, onPick }) {
   );
 }
 
-// head: [{ label, sorted }]; rows: null — грузится (скелет), [] — пусто; cells(r, i): [{ v, cls }].
-function DataTable({ head, rows, empty, onRowClick, cells }) {
+function SortTh({ label, k, sort, onSort, cls }) {
+  const on = sort.key === k;
   return (
-    <div className="table-wrap">
+    <th className={`th-sort${cls ? ` ${cls}` : ""}`} onClick={() => onSort(k)} aria-sort={on ? (sort.dir === "desc" ? "descending" : "ascending") : "none"}>
+      {label}{on ? (sort.dir === "desc" ? " ▾" : " ▴") : ""}
+    </th>
+  );
+}
+
+function shareMap(rows, key, idOf) {
+  const pct = shares((rows || []).map((r) => Number(r[key] || 0)));
+  const out = {};
+  (rows || []).forEach((r, i) => { out[idOf(r)] = pct[i]; });
+  return out;
+}
+
+function DataTable({ head, rows, empty, onRowClick, cells, sort, onSort }) {
+  return (
+    <div className="tscroll">
       <table>
         <thead>
           <tr>
-            {head.map((h) => (
-              <th key={h.label}>
-                {h.label}
-                {h.sorted && <span className="ar"> ▾</span>}
-              </th>
-            ))}
+            {head.map((h) => h.sort
+              ? <SortTh key={h.k} label={h.label} k={h.k} sort={sort} onSort={onSort} cls={h.cls} />
+              : <th key={h.k || h.label} className={h.cls}>{h.label}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -72,12 +72,13 @@ function DataTable({ head, rows, empty, onRowClick, cells }) {
   );
 }
 
-// Домены одного клиента. Монтируется только с непустым ip; useLoad перезагружает
-// по path, так что смена окна или клиента подтягивает свежие данные.
 function ClientDrill({ ip, win, onClose }) {
   const { t } = useI18n();
   const { data, loading, error } = useLoad(clientStatsPath(ip, win));
   const rows = loading ? null : data ? data.rows || [] : error ? [] : null;
+  const [sort, setSort] = useState({ key: "queries", dir: "desc" });
+  const sorted = rows ? sortRows(rows, sort.key, sort.dir) : rows;
+  const clickSort = (k) => setSort((s) => (s.key === k ? { key: k, dir: s.dir === "desc" ? "asc" : "desc" } : { key: k, dir: "desc" }));
   return (
     <div className="drill">
       <div className="dhead">
@@ -86,11 +87,31 @@ function ClientDrill({ ip, win, onClose }) {
       </div>
       <Err text={error} />
       <DataTable
-        head={[{ label: t("domain") }, { label: t("queries"), sorted: true }, { label: t("blockedCol") }]}
-        rows={rows}
+        head={[
+          { label: t("domain"), k: "name", sort: true },
+          { label: t("queries"), k: "queries", sort: true, cls: "num" },
+          { label: t("blockedCol"), k: "acl", sort: true, cls: "num" },
+        ]}
+        rows={sorted}
         empty={t("noData")}
-        cells={(r) => [{ v: r.name }, { v: r.queries, cls: "num" }, { v: r.acl, cls: r.acl > 0 ? "hot" : undefined }]}
+        sort={sort}
+        onSort={clickSort}
+        cells={(r) => [{ v: r.name }, { v: num(r.queries), cls: "num" }, { v: num(r.acl), cls: r.acl > 0 ? "num hot" : "num" }]}
       />
+    </div>
+  );
+}
+
+function num(n) {
+  return Number(n || 0).toLocaleString();
+}
+
+function HeroCell({ label, value, sub, warn }) {
+  return (
+    <div className={`stcell${warn ? " warn" : ""}`}>
+      <span className="v">{value}</span>
+      <span className="l">{label}</span>
+      {sub ? <span className="s">{sub}</span> : null}
     </div>
   );
 }
@@ -103,6 +124,9 @@ export function Stats() {
   const [ipMissing, setIpMissing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(null);
   const [agoSec, setAgoSec] = useState(0);
+  const [domSort, setDomSort] = useState({ key: "queries", dir: "desc" });
+  const [proxySort, setProxySort] = useState({ key: "bytes", dir: "desc" });
+  const [cliSort, setCliSort] = useState({ key: "queries", dir: "desc" });
   const load = useLoad(statsPath(win));
   const { data, loading, error, reload } = load;
   usePoll(reload, POLL_MS);
@@ -111,17 +135,18 @@ export function Stats() {
     setUpdatedAt(Date.now());
     setAgoSec(0);
   }, [data]);
-  // Тикер держит «Обновлено N с назад» честным между опросами.
   useEffect(() => {
     if (updatedAt == null) return;
     const timer = setInterval(() => setAgoSec(Math.round((Date.now() - updatedAt) / 1000)), 1000);
     return () => clearInterval(timer);
   }, [updatedAt]);
 
-  // drill закрывается при смене окна: его строки относятся к прежнему окну.
   const pickWindow = (w) => {
     setWin(w);
     setSelected("");
+    setDomSort({ key: "queries", dir: "desc" });
+    setProxySort({ key: "bytes", dir: "desc" });
+    setCliSort({ key: "queries", dir: "desc" });
   };
   const openClient = (ip) => {
     setDraft(ip);
@@ -137,11 +162,22 @@ export function Stats() {
     }
     openClient(ip);
   };
+  const clickSort = (set) => (k) => set((s) => (s.key === k ? { key: k, dir: s.dir === "desc" ? "asc" : "desc" } : { key: k, dir: "desc" }));
 
   const domains = loading ? null : data ? data.domains || [] : error ? [] : null;
   const clients = loading ? null : data ? data.clients || [] : error ? [] : null;
   const proxy = loading ? null : data ? data.proxy || [] : error ? [] : null;
-  const clientShare = shares((clients || []).map((c) => c.queries));
+  const totals = data?.totals || {};
+  const q = Number(totals.queries || 0);
+  const blocked = Number(totals.blocked || 0);
+  const blockedPct = q ? Math.round((blocked / q) * 100) : 0;
+
+  const domainShare = useMemo(() => shareMap(domains, "queries", (r) => r.name), [domains]);
+  const proxyShare = useMemo(() => shareMap(proxy, "bytes", (r) => r.name), [proxy]);
+  const clientShare = useMemo(() => shareMap(clients, "queries", (r) => r.ip), [clients]);
+  const sortedDomains = domains ? sortRows(domains, domSort.key, domSort.dir) : domains;
+  const sortedProxy = proxy ? sortRows(proxy, proxySort.key, proxySort.dir) : proxy;
+  const sortedClients = clients ? sortRows(clients, cliSort.key, cliSort.dir) : clients;
 
   return (
     <>
@@ -168,51 +204,103 @@ export function Stats() {
       <Err text={error} />
       {ipMissing && <div className="banner err">{t("clientIpEmpty")}</div>}
 
+      <div className="hero st">
+        <HeroCell label={t("queries")} value={loading ? "…" : num(q)} />
+        <div className="vsep" />
+        <HeroCell
+          label={t("totBlocked")}
+          value={loading ? "…" : num(blocked)}
+          sub={q ? `${blockedPct}% ${t("ofQueries")}` : null}
+          warn={blocked > 0}
+        />
+        <div className="vsep" />
+        <HeroCell label={t("totClients")} value={loading ? "…" : num(totals.clients)} />
+        <div className="vsep" />
+        <HeroCell
+          label={t("totProxy")}
+          value={loading ? "…" : fmtBytes(totals.bytes || 0)}
+          sub={loading ? null : `${num(totals.sessions)} ${t("sessionsCol").toLowerCase()}`}
+        />
+      </div>
+
       <div className="stats-grid">
-        <div className="card">
+        <div className="tablecard">
           <h2>{t("topDomains")} <small>{t("byQueries")}</small></h2>
           <DataTable
-            head={[{ label: t("domain") }, { label: t("queries"), sorted: true }, { label: t("blockedCol") }, { label: t("clientsCount") }]}
-            rows={domains}
-            empty={t("noData")}
-            cells={(r) => [
-              { v: r.name },
-              { v: r.queries, cls: "num" },
-              { v: r.acl, cls: r.acl > 0 ? "hot" : undefined },
-              { v: r.clients },
+            head={[
+              { label: t("rankCol"), k: "rank", cls: "rank" },
+              { label: t("domain"), k: "name", sort: true },
+              { label: t("queries"), k: "queries", sort: true, cls: "num" },
+              { label: t("blockedCol"), k: "acl", sort: true, cls: "num" },
+              { label: t("clientsCount"), k: "clients", sort: true, cls: "num" },
+              { label: t("shareCol"), k: "share" },
             ]}
+            rows={sortedDomains}
+            empty={t("noData")}
+            sort={domSort}
+            onSort={clickSort(setDomSort)}
+            cells={(r, i) => {
+              const pct = domainShare[r.name] || 0;
+              return [
+                { v: String(i + 1).padStart(2, "0"), cls: "rank" },
+                { v: r.name },
+                { v: num(r.queries), cls: "num" },
+                { v: num(r.acl), cls: r.acl > 0 ? "num hot" : "num" },
+                { v: num(r.clients), cls: "num" },
+                { v: <><span className="share">{pct}%</span><div className="bar"><div style={{ width: `${pct}%` }} /></div></> },
+              ];
+            }}
           />
         </div>
-        <div className="card">
+        <div className="tablecard">
           <h2>{t("proxyByDomain")} <small>{t("sniTag")}</small></h2>
           <DataTable
-            head={[{ label: t("domain") }, { label: t("sessionsCol") }, { label: t("bytesCol"), sorted: true }]}
-            rows={proxy}
+            head={[
+              { label: t("rankCol"), k: "rank", cls: "rank" },
+              { label: t("domain"), k: "name", sort: true },
+              { label: t("sessionsCol"), k: "sessions", sort: true, cls: "num" },
+              { label: t("bytesCol"), k: "bytes", sort: true, cls: "num" },
+              { label: t("shareCol"), k: "share" },
+            ]}
+            rows={sortedProxy}
             empty={t("noData")}
-            cells={(r) => [{ v: r.name }, { v: r.sessions }, { v: fmtBytes(r.bytes), cls: "num" }]}
+            sort={proxySort}
+            onSort={clickSort(setProxySort)}
+            cells={(r, i) => {
+              const pct = proxyShare[r.name] || 0;
+              return [
+                { v: String(i + 1).padStart(2, "0"), cls: "rank" },
+                { v: r.name },
+                { v: num(r.sessions), cls: "num" },
+                { v: fmtBytes(r.bytes), cls: "num" },
+                { v: <><span className="share">{pct}%</span><div className="bar"><div style={{ width: `${pct}%` }} /></div></> },
+              ];
+            }}
           />
         </div>
-        <div className="card full">
+        <div className="tablecard full">
           <h2>{t("clientsCol")} <small>{t("clientsHint")}</small></h2>
           <DataTable
-            head={[{ label: t("clientIp") }, { label: t("queries"), sorted: true }, { label: t("blockedCol") }, { label: t("shareCol") }]}
-            rows={clients}
+            head={[
+              { label: t("rankCol"), k: "rank", cls: "rank" },
+              { label: t("clientIp"), k: "ip", sort: true },
+              { label: t("queries"), k: "queries", sort: true, cls: "num" },
+              { label: t("blockedCol"), k: "acl", sort: true, cls: "num" },
+              { label: t("shareCol"), k: "share" },
+            ]}
+            rows={sortedClients}
             empty={t("noData")}
             onRowClick={(r) => openClient(r.ip)}
+            sort={cliSort}
+            onSort={clickSort(setCliSort)}
             cells={(r, i) => {
-              const pct = clientShare[i];
+              const pct = clientShare[r.ip] || 0;
               return [
+                { v: String(i + 1).padStart(2, "0"), cls: "rank" },
                 { v: r.ip },
-                { v: r.queries, cls: "num" },
-                { v: r.acl, cls: r.acl > 0 ? "hot" : undefined },
-                {
-                  v: (
-                    <>
-                      <span className="share">{pct}%</span>
-                      <div className="bar"><div style={{ width: `${pct}%` }} /></div>
-                    </>
-                  ),
-                },
+                { v: num(r.queries), cls: "num" },
+                { v: num(r.acl), cls: r.acl > 0 ? "num hot" : "num" },
+                { v: <><span className="share">{pct}%</span><div className="bar"><div style={{ width: `${pct}%` }} /></div></> },
               ];
             }}
           />

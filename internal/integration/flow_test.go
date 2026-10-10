@@ -79,7 +79,7 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Contains(ct, []byte(keyHex)) || len(ct) == 0 {
-		t.Fatal("ключ не должен лежать в базе открытым текстом")
+		t.Fatal("key must not be stored in plaintext")
 	}
 	opened, err := st.NodeKey(ctx, node.ID)
 	if err != nil || len(opened) != 32 {
@@ -186,7 +186,7 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if wide, err := st.DNSSnapshot(ctx); err != nil || !snapshotHasIP(wide, "203.0.113.10") {
-		t.Fatalf("окно живости не расширилось: %v", err)
+		t.Fatalf("liveness window did not widen: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE setting SET pull_interval_sec = 5`); err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func TestPostgresDecisions(t *testing.T) {
 	if off, err := st.DNSSnapshot(ctx); err != nil {
 		t.Fatal(err)
 	} else if len(off.Allow) != 0 || len(off.Deny) != 0 || len(off.Bootstrap) != 1 {
-		t.Fatalf("выключенные списки всё ещё в снимке: allow=%v deny=%v boot=%v", off.Allow, off.Deny, off.Bootstrap)
+		t.Fatalf("disabled lists still in snapshot: allow=%v deny=%v boot=%v", off.Allow, off.Deny, off.Bootstrap)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE setting SET allow_enabled = true, deny_enabled = true`); err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestPostgresDecisions(t *testing.T) {
 	)
 	skipped, err := st.InsertHits(ctx, node.ID, hits)
 	if err != nil || skipped != 1 {
-		t.Fatalf("вставка: skipped=%d err=%v", skipped, err)
+		t.Fatalf("insert: skipped=%d err=%v", skipped, err)
 	}
 	var bulk, skew int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE qname = 'bulk.test.'), count(*) FILTER (WHERE qname = 'skew.test.' AND at > now() - interval '1 hour') FROM dns_hit`).Scan(&bulk, &skew); err != nil {
@@ -314,11 +314,11 @@ func TestPostgresDecisions(t *testing.T) {
 	}
 	rootResp.Body.Close()
 	if !strings.Contains(rootResp.Header.Get("Content-Security-Policy"), "default-src 'self'") {
-		t.Fatalf("нет CSP: %q", rootResp.Header.Get("Content-Security-Policy"))
+		t.Fatalf("missing CSP: %q", rootResp.Header.Get("Content-Security-Policy"))
 	}
 	// State change without the CSRF header is refused.
 	if code := apiCall(t, ts.URL, http.MethodPost, "/api/services", `{"name":"x"}`, "application/json", sess.cookie, ""); code != http.StatusForbidden {
-		t.Fatalf("без CSRF: %d", code)
+		t.Fatalf("without CSRF: %d", code)
 	}
 	// The stats endpoint returns all three aggregates; a bad ip is rejected.
 	req2, err := http.NewRequest(http.MethodGet, ts.URL+"/api/stats?window=1h", nil)
@@ -361,19 +361,19 @@ func TestPostgresDecisions(t *testing.T) {
 	// Password change ends other sessions but keeps this one.
 	other := login(t, ts.URL, "admin", "panel-pass-long")
 	if code := apiCall(t, ts.URL, http.MethodPost, "/api/password", `{"current":"wrong","next":"another-pass-long"}`, "application/json", sess.cookie, sess.csrf); code != http.StatusBadRequest {
-		t.Fatalf("неверный текущий пароль: %d", code)
+		t.Fatalf("wrong current password: %d", code)
 	}
 	if code := apiCall(t, ts.URL, http.MethodPost, "/api/password", `{"current":"panel-pass-long","next":"short"}`, "application/json", sess.cookie, sess.csrf); code != http.StatusBadRequest {
-		t.Fatalf("короткий пароль: %d", code)
+		t.Fatalf("short password: %d", code)
 	}
 	if code := apiCall(t, ts.URL, http.MethodPost, "/api/password", `{"current":"panel-pass-long","next":"another-pass-long"}`, "application/json", sess.cookie, sess.csrf); code != http.StatusOK {
-		t.Fatalf("смена пароля: %d", code)
+		t.Fatalf("password change: %d", code)
 	}
 	if code := apiCall(t, ts.URL, http.MethodGet, "/api/me", "", "", other.cookie, ""); code != http.StatusUnauthorized {
-		t.Fatalf("вторая сессия жива: %d", code)
+		t.Fatalf("second session still alive: %d", code)
 	}
 	if code := apiCall(t, ts.URL, http.MethodGet, "/api/me", "", "", sess.cookie, ""); code != http.StatusOK {
-		t.Fatalf("текущая сессия умерла: %d", code)
+		t.Fatalf("current session died: %d", code)
 	}
 
 	// Rate limit: sixth wrong password is blocked.
@@ -381,15 +381,15 @@ func TestPostgresDecisions(t *testing.T) {
 		apiCall(t, ts.URL, http.MethodPost, "/api/login", `{"username":"admin","password":"nope"}`, "application/json", nil, "")
 	}
 	if code := apiCall(t, ts.URL, http.MethodPost, "/api/login", `{"username":"admin","password":"another-pass-long"}`, "application/json", nil, ""); code != http.StatusTooManyRequests {
-		t.Fatalf("шестая попытка: %d", code)
+		t.Fatalf("sixth attempt: %d", code)
 	}
 
 	closed := postConnect(t, ts.URL, sess, node.ID)
 	if closed.OK {
-		t.Fatal("закрытый порт не должен подключаться")
+		t.Fatal("closed port must not connect")
 	}
 	if closed.Error == "" {
-		t.Fatal("нет текста ошибки")
+		t.Fatal("missing error text")
 	}
 	tlsCfg, err := agent.ServerTLS(opened)
 	if err != nil {
@@ -411,7 +411,7 @@ func TestPostgresDecisions(t *testing.T) {
 	}
 	ok := postConnect(t, ts.URL, sess, node.ID)
 	if !ok.OK {
-		t.Fatalf("ожидали связь: %s", ok.Error)
+		t.Fatalf("wanted a link: %s", ok.Error)
 	}
 
 	// The agent got v1. A settings change makes v2.
@@ -423,11 +423,11 @@ func TestPostgresDecisions(t *testing.T) {
 	}
 	before := proxySrv.Snapshot()
 	if before == nil || before.Version != 2 {
-		t.Fatalf("ожидали v2 у агента: %+v", before)
+		t.Fatalf("wanted v2 on the agent: %+v", before)
 	}
 	// The proxy gets the same client lists as DNS.
 	if len(before.Allow) != 1 || before.Allow[0] != "127.0.0.1/32" {
-		t.Fatalf("списки клиентов не дошли до прокси: %+v", before.Allow)
+		t.Fatalf("client lists did not reach the proxy: %+v", before.Allow)
 	}
 	// A restored database forgets v2 and would publish v1 again. The agent rejects it as old,
 	// the panel notices it never published the agent's version and starts a new epoch.
@@ -435,11 +435,11 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ok := postConnect(t, ts.URL, sess, node.ID); !ok.OK {
-		t.Fatalf("после отката базы: %s", ok.Error)
+		t.Fatalf("after rolling the DB back: %s", ok.Error)
 	}
 	after := proxySrv.Snapshot()
 	if after.Epoch == before.Epoch {
-		t.Fatalf("эпоха не сменилась: %s", after.Epoch)
+		t.Fatalf("epoch did not change: %s", after.Epoch)
 	}
 }
 
@@ -485,17 +485,17 @@ func login(t *testing.T, base, user, pass string) session {
 		CSRF string `json:"csrf"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("вход: %d %v", resp.StatusCode, err)
+		t.Fatalf("sign-in: %d %v", resp.StatusCode, err)
 	}
 	for _, c := range resp.Cookies() {
 		if c.Name == "dnsmarty" {
 			if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
-				t.Fatalf("флаги cookie: %+v", c)
+				t.Fatalf("cookie flags: %+v", c)
 			}
 			return session{cookie: c, csrf: out.CSRF}
 		}
 	}
-	t.Fatal("нет сессии")
+	t.Fatal("no session")
 	return session{}
 }
 

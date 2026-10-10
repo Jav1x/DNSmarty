@@ -25,6 +25,9 @@ type Options struct {
 	// CookieSecure marks the session cookie Secure, names it __Host-dnsmarty and turns on HSTS.
 	// Off only for plain-HTTP development.
 	CookieSecure bool
+	// OAuthHTTP and OAuthEndpoints override the provider calls. Production leaves them empty.
+	OAuthHTTP      *http.Client
+	OAuthEndpoints map[string]OAuthEndpoint
 	// TrustedProxies may set X-Forwarded-For. Anyone else's header is ignored.
 	TrustedProxies []netip.Prefix
 	Version        string
@@ -151,18 +154,18 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(s.cookieName())
 		if err != nil || c.Value == "" {
-			writeErr(w, http.StatusUnauthorized, "unauthorized", "нужен вход")
+			writeErr(w, http.StatusUnauthorized, "unauthorized", "Sign in required.")
 			return
 		}
 		sess, err := s.store.LookupSession(r.Context(), c.Value)
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "unauthorized", "нужен вход")
+			writeErr(w, http.StatusUnauthorized, "unauthorized", "Sign in required.")
 			return
 		}
 		if unsafeMethod(r.Method) {
 			token := r.Header.Get("X-CSRF-Token")
 			if !sameOrigin(r) || token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(sess.CSRF)) != 1 {
-				writeErr(w, http.StatusForbidden, "csrf", "Запрос отклонён: обновите страницу.")
+				writeErr(w, http.StatusForbidden, "csrf", "Request rejected: reload the page.")
 				return
 			}
 		}
@@ -239,7 +242,7 @@ func (s *Server) observe(next http.Handler) http.Handler {
 				}
 				s.log.Error("panic", "id", id, "path", r.URL.Path, "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
 				if sw.status == 0 {
-					writeErr(sw, http.StatusInternalServerError, "internal", "Внутренняя ошибка панели.")
+					writeErr(sw, http.StatusInternalServerError, "internal", "Internal panel error.")
 				}
 			}
 			if r.URL.Path == "/healthz" {

@@ -1,9 +1,3 @@
-// Настройки — порт lab13: нумерованные секции 01–04, sticky-сейвбар,
-// drag-таблица апстримов с чипами протокола (вычисляются на клиенте).
-// Секции Bootstrap больше нет; поле bootstrap_cidr в API не трогаем —
-// уходит в теле сохранения серверное значение без изменений.
-// Сетевой контракт прежний: GET /api/settings, POST /api/settings,
-// POST /api/upstreams, POST /api/upstreams/:id, DELETE /api/upstreams/:id.
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useLoad } from "../hooks/useLoad";
@@ -11,19 +5,19 @@ import { useI18n } from "../i18n";
 import { Err, SkeletonRows } from "../components/Bits";
 import { useConfirm, useToast } from "../components/Toast";
 import Savebar from "../ui/Savebar";
+import { Modal } from "../ui/Modal";
+import { Switch } from "../ui/Switch";
 import { protoOf } from "../lib/util";
 
-// Редактируемые поля настроек; bootstrap_cidr сюда не входит.
 const FIELDS = ["ttl", "pull_interval_sec", "retention_days", "session_limit", "dial_timeout_ms", "idle_timeout_ms", "dns_rate_qps", "audit_retention_days", "agent_image"];
 
-// Копия настроек и апстримов из данных сервера — для сверки dirty.
 function serverCopy(data) {
   return { settings: { ...data.settings }, upstreams: (data.upstreams || []).map((u) => ({ ...u })) };
 }
 function formOf(s) {
   const f = {};
   for (const k of FIELDS) f[k] = s[k] ?? "";
-  f.bootstrap_cidr = s.bootstrap_cidr ?? ""; // не редактируется, но уходит в теле как раньше
+  f.bootstrap_cidr = s.bootstrap_cidr ?? "";
   return f;
 }
 function rowsOf(upstreams) {
@@ -35,15 +29,12 @@ export function Settings() {
   const { data, loading, error, setError, reload } = useLoad("/api/settings");
   const [ask, confirmRow] = useConfirm();
   const toast = useToast();
-  const [server, setServer] = useState(null); // последняя серверная копия
-  const [form, setForm] = useState(null);     // редактируемые значения
-  const [rows, setRows] = useState([]);       // апстримы: {key, id|null, addr}
-  // drag-перестановка строк (лаба 13): строка-источник и строка-цель
+  const [server, setServer] = useState(null);
+  const [form, setForm] = useState(null);
+  const [rows, setRows] = useState([]);
   const [dragKey, setDragKey] = useState(null);
   const [overKey, setOverKey] = useState(null);
 
-  // Новые данные с сервера попадают в состояние, только когда это разрешено
-  // (на старте и после сохранения), чтобы reload не затёр несохранённые правки.
   const syncRef = useRef(true);
   useEffect(() => {
     if (!data) return;
@@ -56,7 +47,6 @@ export function Settings() {
     }
   }, [data]);
 
-  // Сколько значений расходится с серверной копией.
   function countDirty() {
     if (!form || !server) return 0;
     let n = 0;
@@ -64,14 +54,12 @@ export function Settings() {
     const svRows = server.upstreams;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
-      if (!r.id) { if (r.addr.trim()) n++; continue; } // новая строка с адресом
+      if (!r.id) { if (r.addr.trim()) n++; continue; }
       const ui = svRows.findIndex((x) => x.id === r.id);
       if (ui < 0) { n++; continue; }
-      // сверка с позицией в серверном списке (а не с сырым ordinal — он может
-      // приходить с пропусками от прежнего UI): правка адреса или перестановка
       if (r.addr !== svRows[ui].addr || ui !== i) n++;
     }
-    n += svRows.filter((u) => !rows.some((r) => r.id === u.id)).length; // удалённые
+    n += svRows.filter((u) => !rows.some((r) => r.id === u.id)).length;
     return n;
   }
   const dirtyCount = countDirty();
@@ -119,7 +107,6 @@ export function Settings() {
   }
   async function save() {
     try {
-      // Апстримы: новые — создать, изменённые — обновить (порядок 1..N).
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
         if (!r.id) {
@@ -133,11 +120,10 @@ export function Settings() {
       }
       await api("/api/settings", { method: "POST", body: JSON.stringify(settingsBody()) });
       toast(t("saved"));
-      syncRef.current = true; // после сохранения форма заново сверится с сервером
+      syncRef.current = true;
       reload();
     } catch (e) { setError(e); }
   }
-  // «Сбросить» возвращает серверные значения.
   function reset() {
     setForm(formOf(server.settings));
     setRows(rowsOf(server.upstreams));
@@ -164,7 +150,6 @@ export function Settings() {
       </div>
       <Savebar dirty={dirty} count={dirtyCount} reset={reset} save={save} />
 
-      {/* 01 · резолвер */}
       <section className="sect">
         <h2><span className="wrapl"><span className="snum">01</span>{t("resolvers")} <small>{t("resolversSub")}</small></span></h2>
         <div className="sbody">
@@ -220,7 +205,6 @@ export function Settings() {
         </div>
       </section>
 
-      {/* 02 · журналы */}
       <section className="sect">
         <h2><span className="wrapl"><span className="snum">02</span>{t("logs")} <small>{t("logsSub")}</small></span></h2>
         <div className="sbody">
@@ -239,7 +223,6 @@ export function Settings() {
         </div>
       </section>
 
-      {/* 03 · прокси */}
       <section className="sect">
         <h2><span className="wrapl"><span className="snum">03</span>{t("proxyTitle")} <small>{t("proxySessSub")}</small></span></h2>
         <div className="sbody">
@@ -263,7 +246,6 @@ export function Settings() {
         </div>
       </section>
 
-      {/* 04 · агенты */}
       <section className="sect">
         <h2><span className="wrapl"><span className="snum">04</span>{t("agents")} <small>{t("agentsSub")}</small></span></h2>
         <div className="sbody">
@@ -281,7 +263,191 @@ export function Settings() {
           </div>
         </div>
       </section>
+      <OAuthSettings />
       <div className="endpad" />
     </>
+  );
+}
+
+const OAUTH_NAME = {
+  google: "oauthNameGoogle",
+  github: "oauthNameGitHub",
+  yandex: "oauthNameYandex",
+};
+const OAUTH_STEPS = ["oauthStepProvider", "oauthStepKeys", "oauthStepUrls"];
+
+function oauthAddresses(id) {
+  const origin = window.location.origin;
+  const callback = `${origin}/api/auth/oauth/${id}/callback`;
+  if (id === "github") {
+    return [
+      { key: "home", label: "oauthUrlHome", hint: "oauthUrlHomeHint", value: origin },
+      { key: "cb", label: "oauthUrlCallback", hint: "oauthUrlCallbackHint", value: callback },
+    ];
+  }
+  if (id === "yandex") {
+    return [
+      { key: "site", label: "oauthUrlSite", hint: "oauthUrlSiteHint", value: origin },
+      { key: "cb", label: "oauthUrlCallbackYandex", hint: "oauthUrlCallbackYandexHint", value: callback },
+    ];
+  }
+  return [
+    { key: "origin", label: "oauthUrlOrigin", hint: "oauthUrlOriginHint", value: origin },
+    { key: "redir", label: "oauthUrlRedirect", hint: "oauthUrlRedirectHint", value: callback },
+  ];
+}
+
+function OAuthSettings() {
+  const { t } = useI18n();
+  const { data, error, reload } = useLoad("/api/settings/oauth");
+  const [editing, setEditing] = useState(null);
+  const providers = data?.providers || [];
+
+  return (
+    <section className="sect">
+      <h2><span className="wrapl"><span className="snum">05</span>{t("oauthSect")} <small>{t("oauthSectSub")}</small></span></h2>
+      <div className="sbody">
+        <Err text={error} />
+        {providers.map((p) => (
+          <div className="oauth-line" key={p.id}>
+            <span className={`lamp${p.enabled ? " on" : ""}`} aria-hidden="true" />
+            <b>{t(OAUTH_NAME[p.id] || p.name)}</b>
+            <span className="st">{p.enabled ? t("oauthOn") : t("oauthOff")}</span>
+            <button type="button" className="btn sm" onClick={() => setEditing(p.id)}>{t("oauthConfigure")}</button>
+          </div>
+        ))}
+      </div>
+      {editing && (
+        <OAuthModal
+          provider={providers.find((p) => p.id === editing)}
+          providers={providers}
+          onClose={() => setEditing(null)}
+          onSaved={reload}
+        />
+      )}
+    </section>
+  );
+}
+
+function OAuthModal({ provider, providers, onClose, onSaved }) {
+  const { t } = useI18n();
+  const [step, setStep] = useState(1);
+  const [pick, setPick] = useState(provider?.id || "");
+  const [clientId, setClientId] = useState(provider?.client_id || "");
+  const [secret, setSecret] = useState("");
+  const [enabled, setEnabled] = useState(!!provider?.enabled);
+  const [hasSecret, setHasSecret] = useState(!!provider?.has_secret);
+  const [copied, setCopied] = useState("");
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const current = providers.find((p) => p.id === pick) || provider;
+  const name = pick ? t(OAUTH_NAME[pick] || current?.name || pick) : t("oauthStepProvider");
+
+  function choose(id) {
+    const found = providers.find((p) => p.id === id);
+    setPick(id);
+    setClientId(found?.client_id || "");
+    setSecret("");
+    setEnabled(!!found?.enabled);
+    setHasSecret(!!found?.has_secret);
+    setSaved(false);
+    setError("");
+  }
+
+  async function copy(value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(value);
+    } catch (e) { setError(e); }
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await api("/api/settings/oauth", {
+        method: "POST",
+        body: JSON.stringify({ provider: pick, client_id: clientId, secret, enabled }),
+      });
+      setSaved(true);
+      setSecret("");
+      if (secret) setHasSecret(true);
+      onSaved();
+    } catch (e) { setError(e); }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={720}
+      title={t("oauthSect")}
+      note={<span className="dirty">{name} · {t(OAUTH_STEPS[step])}</span>}
+      footer={(
+        <>
+          <button type="button" className="btn ghost" onClick={step === 0 ? onClose : () => setStep(step - 1)}>{step === 0 ? t("cancel") : t("back")}</button>
+          {step < 2 && (
+            <button type="button" className="btn" disabled={step === 0 && !pick} onClick={() => setStep(step + 1)}>{t("next")} →</button>
+          )}
+          {step === 2 && !saved && <button type="submit" form="oauth-save" className="btn">{t("save")}</button>}
+          {step === 2 && saved && <button type="button" className="btn" onClick={onClose}>{t("totpDone")}</button>}
+        </>
+      )}
+    >
+      <div className="stepper">
+        {OAUTH_STEPS.map((key, i) => (
+          <span className="stepwrap" key={key}>
+            {i > 0 && <span className="starrow" aria-hidden="true">→</span>}
+            <span className={`step${i === step ? " on" : i < step ? " done" : ""}`}>
+              <span className="n">{i < step ? "✓" : i + 1}</span>{t(key)}
+            </span>
+          </span>
+        ))}
+      </div>
+      {step === 0 && (
+        <div className="tplgrid">
+          {providers.map((p) => (
+            <button type="button" key={p.id} className={`tplcard${p.id === pick ? " on" : ""}`} onClick={() => choose(p.id)}>
+              <b>{t(OAUTH_NAME[p.id] || p.name)}</b>
+              <span>{p.enabled ? t("oauthOn") : t("oauthOff")}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {step === 1 && (
+        <form className="code-step" onSubmit={(e) => { e.preventDefault(); setStep(2); }}>
+          <Err text={error} />
+          <div className="f">
+            <label htmlFor="oa-client">{t("oauthClientID")}</label>
+            <input id="oa-client" value={clientId} spellCheck={false} autoComplete="off" onChange={(e) => { setClientId(e.target.value); setSaved(false); }} />
+          </div>
+          <div className="f">
+            <label htmlFor="oa-secret">{t("oauthClientSecret")}</label>
+            <input id="oa-secret" type="password" value={secret} autoComplete="new-password" placeholder={hasSecret ? "••••••••" : ""} onChange={(e) => { setSecret(e.target.value); setSaved(false); }} />
+          </div>
+          <div className="swrow">
+            <span className="t"><b>{t("enabled")}</b><span>{t("oauthSecretKeep")}</span></span>
+            <Switch on={enabled} onChange={(v) => { setEnabled(v); setSaved(false); }} label={t("enabled")} />
+          </div>
+        </form>
+      )}
+      {step === 2 && (
+        <form id="oauth-save" className="code-step" onSubmit={save}>
+          <Err text={error} />
+          {saved && <div className="banner ok">{t("oauthSaved")}</div>}
+          <p className="hint">{t("oauthUrlLead", { name })}</p>
+          {oauthAddresses(pick).map((row) => (
+            <div className="oauth-url" key={row.key}>
+              <label>{t(row.label)}</label>
+              <p className="hint">{t(row.hint)}</p>
+              <div className="tok">
+                <span>{row.value}</span>
+                <button type="button" className="copybtn" onClick={() => copy(row.value)}>{copied === row.value ? t("copied") : t("copy")}</button>
+              </div>
+            </div>
+          ))}
+        </form>
+      )}
+    </Modal>
   );
 }

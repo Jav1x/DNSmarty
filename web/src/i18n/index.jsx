@@ -35,22 +35,23 @@ export function I18nProvider({ children }) {
     if (typeof message === "object" && message !== null) {
       return errFromBody(message);
     }
-    // Plain string errors come from agents and older paths; keep the phrase tables for them.
     const exact = dictPhrases[lang][message];
     if (exact) return exact;
-    const reach = message.match(/^(?:нет связи с|Cannot reach) (.+)$/);
-    if (reach) return lang === "ru" ? `Нет связи с ${reach[1]}` : `Cannot reach ${reach[1]}`;
-    const field = message.match(/^(?:Проверьте поле|Check the field): (.+)$/);
+    const reach = message.match(/^Cannot reach (.+)$/);
+    if (reach) return t("errReach", { host: reach[1] });
+    const field = message.match(/^Check the field: (.+)$/);
     if (field) {
       const name = dictFields[lang][field[1]] || field[1];
-      return lang === "ru" ? `Проверьте поле: ${name}` : `Check the field: ${name}`;
+      return t("errInvalid", { field: name });
     }
-    const boot = message.match(/^Проверьте поле: bootstrap (.+)$/);
-    if (boot) return lang === "ru" ? message : `Check the field: bootstrap ${boot[1]}`;
-    const agent = message.match(/^агент ответил (.+)$/);
-    if (agent) return lang === "ru" ? message : `Agent replied ${agent[1]}`;
-    const cfg = message.match(/^конфиг не принят: (.+)$/);
-    if (cfg) return lang === "ru" ? message : `Config was rejected: ${cfg[1]}`;
+    const agent = message.match(/^agent replied (.+)$/);
+    if (agent) return t("errAgentReplied", { detail: agent[1] });
+    const cfg = message.match(/^config rejected: (.+)$/);
+    if (cfg) return t("errConfigRejected", { detail: cfg[1] });
+    const stale = message.match(/^agent has a newer snapshot: (.+)$/);
+    if (stale) return t("errStaleSnap", { n: stale[1] });
+    const stats = message.match(/^stats: (.+)$/);
+    if (stats) return t("errStats", { detail: stats[1] });
     return message;
   }
 

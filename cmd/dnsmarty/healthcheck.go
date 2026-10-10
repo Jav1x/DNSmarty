@@ -17,13 +17,13 @@ func healthcheckCmd() *cobra.Command {
 	var timeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "healthcheck",
-		Short: "Проверить HTTP-эндпоинт: код 0, если ответ 200",
+		Short: "Check HTTP endpoint: exit 0 if the response is 200",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return probe(cmd.Context(), url, timeout)
 		},
 	}
-	cmd.Flags().StringVar(&url, "url", "http://127.0.0.1:8080/healthz", "адрес проверки")
-	cmd.Flags().DurationVar(&timeout, "timeout", 3*time.Second, "таймаут")
+	cmd.Flags().StringVar(&url, "url", "http://127.0.0.1:8080/healthz", "check URL")
+	cmd.Flags().DurationVar(&timeout, "timeout", 3*time.Second, "timeout")
 	return cmd
 }
 

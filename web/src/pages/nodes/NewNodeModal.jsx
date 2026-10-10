@@ -1,23 +1,3 @@
-// Визард «Новая нода» — порт модалки mb2 из .design-lab/lab10.html (задача 8).
-// Два экрана: 1) «Ключ и адрес» — ток ключа (копировать, «показан один раз»),
-// IP ноды, порт агента (по умолчанию — по роли: dns → 9443, proxy → 9444, как
-// default_port() в scripts/dnsmarty-node.sh), роль; 2) «Связь» — цикл опроса
-// раз в 3 с (телеграм-стикер из лабы, счётчик попыток, без лимита), при ok —
-// успех и «К таблице нод».
-//
-// Порядок шагов диктует замороженный бэкенд: ключ ноды существует только в
-// ответе POST /api/nodes, а agent_host там обязателен (normalizeNode) — создать
-// ноду до ввода адреса нельзя. Поэтому первый «Далее» создаёт ноду (имя авто
-// node-{N} по существующим) и раскрывает ключ прямо на экране 1 — ровно то
-// состояние, которое рисует лаба (её футер-примечание «нода уже создана в
-// панели · ключ больше не покажется»); второй «Далее» уводит на экран 2 и
-// запускает опрос. До создания в .tok — нейтральная заглушка.
-//
-// Цикл опроса: по брифу — «GET», фактический верб — POST /api/nodes/{id}/connect
-// (маршрут server.go:52; бэкенд менять нельзя — тот же расход верба, что в
-// задаче 7). Интервал живёт в ref и гасится на «Отмене», закрытии модалки и
-// размонтировании (useEffect-cleanup + alive-ref: тик, ворвавшийся после
-// отмены, не делает setState).
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useI18n } from "../../i18n";
@@ -26,22 +6,16 @@ import { nextNodeName } from "../../lib/nodename";
 
 export default function NewNodeModal({ nodes, onClose, reload, setError }) {
   const { t } = useI18n();
-  // 0 — «Ключ и адрес», 1 — «Связь» (в лабе — страницы pg1/pg2 степпера).
   const [step, setStep] = useState(0);
-  const [created, setCreated] = useState(null); // {node, key} из ответа create
+  const [created, setCreated] = useState(null);
   const [role, setRole] = useState("dns");
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
-  // Состояние цикла опроса: attempt — номер попытки, linked — null (идёт опрос)
-  // | true (связь есть). timerRef — id setInterval, alive — признак живого цикла.
   const [attempt, setAttempt] = useState(0);
   const [linked, setLinked] = useState(null);
   const timerRef = useRef(null);
   const aliveRef = useRef(false);
 
-  // Единственная точка остановки цикла: «Отмена»/«К таблице нод», закрытие
-  // модалки, размонтирование, успех. Тик, застрявший в сети на момент отмены,
-  // увидит alive=false и не тронет состояние закрытого компонента.
   function stopPolling() {
     aliveRef.current = false;
     if (timerRef.current) {
@@ -49,7 +23,7 @@ export default function NewNodeModal({ nodes, onClose, reload, setError }) {
       timerRef.current = null;
     }
   }
-  useEffect(() => stopPolling, []); // размонтирование модалки
+  useEffect(() => stopPolling, []);
 
   function startPolling(id) {
     stopPolling();
@@ -65,15 +39,15 @@ export default function NewNodeModal({ nodes, onClose, reload, setError }) {
         if (out.ok) {
           stopPolling();
           setLinked(true);
-          reload(); // агент ответил — в таблице появятся версия и «свежесть»
+          reload();
           return;
-        } // ok:false — агент ещё молчит, попытка мимо; цикл продолжается
-      } catch { /* сеть/сервер — попытка без ответа; без лимита попыток */ }
+        }
+      } catch {}
       if (!aliveRef.current) return;
       n += 1;
       setAttempt(n);
     }
-    tick(); // первая попытка сразу, дальше — раз в 3 с
+    tick();
     timerRef.current = setInterval(tick, 3000);
   }
 
@@ -83,8 +57,6 @@ export default function NewNodeModal({ nodes, onClose, reload, setError }) {
     const form = new FormData(event.target);
     setBusy(true);
     try {
-      // lab10: один «IP ноды» — он же адрес дозвона; в контракте это
-      // agent_host + public_ipv4 одним значением. Региона/IPv6 в лабе нет.
       const ip = String(form.get("ip") || "").trim();
       const out = await api("/api/nodes", {
         method: "POST",
@@ -96,7 +68,7 @@ export default function NewNodeModal({ nodes, onClose, reload, setError }) {
           region: "",
           agent_host: ip,
           agent_port: Number(form.get("agent_port")),
-          enabled: false, // лаба: после связи нода «в дежурном режиме», «В ротации» включают отдельно
+          enabled: false,
         }),
       });
       setCreated(out);
@@ -110,11 +82,9 @@ export default function NewNodeModal({ nodes, onClose, reload, setError }) {
       await navigator.clipboard.writeText(created.key);
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
-    } catch { /* нет clipboard — ключ остаётся виден в .tok */ }
+    } catch {}
   }
 
-  // «Отмена», «К таблице нод», Esc, ✕, клик по подложке — один путь: стоп
-  // цикла и закрытие; список нод уже перечитан (reload после create/успеха).
   function toTable() {
     stopPolling();
     onClose();

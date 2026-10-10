@@ -37,7 +37,7 @@ func TestIsBlocked(t *testing.T) {
 	}
 	for _, s := range blocked {
 		if !IsBlocked(net.ParseIP(s), own) {
-			t.Errorf("ждали блок %s", s)
+			t.Errorf("wanted blocked %s", s)
 		}
 	}
 	open := []string{
@@ -50,10 +50,10 @@ func TestIsBlocked(t *testing.T) {
 	}
 	for _, s := range open {
 		if IsBlocked(net.ParseIP(s), own) {
-			t.Errorf("ждали открыт %s", s)
+			t.Errorf("wanted open %s", s)
 		}
 	}
 	if !IsBlocked(nil, nil) {
-		t.Error("nil не заблокирован")
+		t.Error("nil was not blocked")
 	}
 }

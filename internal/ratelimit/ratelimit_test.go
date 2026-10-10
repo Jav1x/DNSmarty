@@ -10,7 +10,7 @@ func TestOff(t *testing.T) {
 	l := New(0)
 	for i := 0; i < 1000; i++ {
 		if l.Check(netip.MustParseAddr("192.0.2.1")) != Pass {
-			t.Fatal("выключенный лимит отказал")
+			t.Fatal("disabled limiter refused")
 		}
 	}
 }
@@ -21,18 +21,18 @@ func TestBurstThenRefill(t *testing.T) {
 	now := time.Unix(1000, 0)
 	for i := 0; i < 20; i++ {
 		if v := l.check(addr, now); v != Pass {
-			t.Fatalf("отказ внутри burst на %d", i)
+			t.Fatalf("refused inside burst at %d", i)
 		}
 	}
 	if l.check(addr, now) == Pass {
-		t.Fatal("сверх burst пропустило")
+		t.Fatal("over burst allowed")
 	}
 	// 10 qps: 100 ms gives one token.
 	if l.check(addr, now.Add(100*time.Millisecond)) != Pass {
-		t.Fatal("токен не восстановился")
+		t.Fatal("token did not refill")
 	}
 	if l.check(addr, now.Add(100*time.Millisecond)) == Pass {
-		t.Fatal("лишний токен")
+		t.Fatal("extra token")
 	}
 }
 
@@ -51,7 +51,7 @@ func TestSlipAlternates(t *testing.T) {
 		case Drop:
 			drop++
 		default:
-			t.Fatal("пропустило без токенов")
+			t.Fatal("allowed with no tokens")
 		}
 	}
 	if slip != 5 || drop != 5 {
@@ -65,15 +65,15 @@ func TestSameNetworkSharesBucket(t *testing.T) {
 	l.check(netip.MustParseAddr("192.0.2.1"), now)
 	l.check(netip.MustParseAddr("192.0.2.200"), now)
 	if l.check(netip.MustParseAddr("192.0.2.77"), now) == Pass {
-		t.Fatal("один /24 — один bucket")
+		t.Fatal("one /24 is one bucket")
 	}
 	if l.check(netip.MustParseAddr("192.0.3.1"), now) != Pass {
-		t.Fatal("соседний /24 зацепило")
+		t.Fatal("neighbor /24 shared the bucket")
 	}
 	l.check(netip.MustParseAddr("2001:db8:0:1::1"), now)
 	l.check(netip.MustParseAddr("2001:db8:0:2::1"), now)
 	if l.check(netip.MustParseAddr("2001:db8:0:3::1"), now) == Pass {
-		t.Fatal("один /56 — один bucket")
+		t.Fatal("one /56 is one bucket")
 	}
 }
 
@@ -83,6 +83,6 @@ func TestMappedIPv4(t *testing.T) {
 	l.check(netip.MustParseAddr("192.0.2.1"), now)
 	l.check(netip.MustParseAddr("::ffff:192.0.2.1"), now)
 	if l.check(netip.MustParseAddr("192.0.2.1"), now) == Pass {
-		t.Fatal("IPv4-mapped не совпал с IPv4")
+		t.Fatal("IPv4-mapped did not match IPv4")
 	}
 }

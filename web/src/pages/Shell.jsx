@@ -5,10 +5,6 @@ import { api } from "../api";
 import { LangSwitch, useI18n } from "../i18n";
 import { ROUTES } from "../routes";
 
-/* Сайдбар — спец §4: три группы (Мониторинг / Управление / Панель).
-   Разметка и глифы 1:1 из утверждённого макета .design-lab/lab16.html:
-   mono-глифы в .ic, активный пункт .on с inset-полосой.
-   Активность считает сам Shell (не NavLink). */
 const groups = [
   ["groupMonitoring", [
     ["/", "overview", "◉"],

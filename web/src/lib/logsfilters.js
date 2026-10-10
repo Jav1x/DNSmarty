@@ -1,11 +1,3 @@
-// Чистая логика страниц «Журналы» (лаба 9) и «Аудит» (лаба 16) — покрыта
-// logsfilters.test.js. Контракт сервера (internal/panel/api.go, s.logs/s.auditLog):
-// /api/logs фильтрует по q/ip и decision|status на своей стороне; времени,
-// qtype и rcode там нет — они применяются на клиенте к загруженным строкам
-// (rows идут по at DESC, поэтому срез «не новее начала окна» честный).
-
-// Живое форматирование ввода домена (скрипт лабы 9): нижний регистр, только
-// допустимые символы, двойные точки схлопываются, ведущие — срезаются.
 export function normDomainInput(s) {
   return s
     .toLowerCase()
@@ -16,8 +8,7 @@ export function normDomainInput(s) {
 
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
-// Валидация домена с живым хинтом (лаба 9): reason — код для t(), canonical —
-// канонический FQDN с точкой (показывается в хинте при ok).
+
 export function fqdnCheck(vRaw) {
   const v = vRaw.toLowerCase();
   if (!v) return { ok: true, reason: "", canonical: "", bad: "" };
@@ -30,7 +21,6 @@ export function fqdnCheck(vRaw) {
   return { ok: true, reason: "", canonical: v.endsWith(".") ? v : `${v}.`, bad: "" };
 }
 
-// Маска ДД.ММ.ГГГГ на лету (лаба 9): только цифры, точки после 2-й и 4-й.
 export function maskDate(v) {
   let d = String(v).replace(/[^\d]/g, "").slice(0, 8);
   if (d.length > 4) return `${d.slice(0, 2)}.${d.slice(2, 4)}.${d.slice(4)}`;
@@ -38,8 +28,6 @@ export function maskDate(v) {
   return d;
 }
 
-// Разбор замаскированной даты: пустая строка — «фильтра нет»; невозможная
-// дата (32.10…, 31.02…) — ok:false.
 export function parseDay(s) {
   if (!s) return { ok: true, t: null };
   const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s);
@@ -53,8 +41,6 @@ export function parseDay(s) {
 
 const PRESET_MS = { "1h": 3600_000, "24h": 86400_000, "7d": 7 * 86400_000 };
 
-// Время фильтрации: окно [start, now] из пресета или начала суток дня.
-// День, если задан, сильнее пресета (UI держит их взаимоисключающими).
 export function timeRange(applied, now = new Date()) {
   if (applied.day) {
     const r = parseDay(applied.day);
@@ -66,14 +52,11 @@ export function timeRange(applied, now = new Date()) {
   return null;
 }
 
-// Строка внутри окна. Конец окна — «сейчас», строки из будущего не приходят.
 export function withinRange(iso, range) {
   if (!range) return true;
   return new Date(iso).getTime() >= range.start.getTime();
 }
 
-// Гистограмма лабы 9: n колонок по размаху загруженных времён, высоты в %,
-// hot — индекс максимума (первый). Пусто — гистограммы нет.
 export function histoBuckets(isoTimes, n = 24) {
   if (!isoTimes.length) return null;
   const times = isoTimes.map((s) => new Date(s).getTime());
@@ -93,8 +76,6 @@ export function histoBuckets(isoTimes, n = 24) {
   return { heights: counts.map((c) => Math.round((c / top) * 100)), hot };
 }
 
-// Сериализация применённых фильтров в съёмные чипы (лаба 9, .activef):
-// [{k, v}] в порядке фильтр-бара; v — сырое значение, переводит t() в компоненте.
 export function activeFilters(kind, applied) {
   const out = [];
   if (applied.q) out.push({ k: "q", v: applied.q });
@@ -111,24 +92,37 @@ export function activeFilters(kind, applied) {
   return out;
 }
 
-// Клиентская часть фильтра строки: qtype/rcode (DNS) и окно времени.
 export function matchRow(row, qtype, rcode, range) {
   if (qtype && row.qtype !== qtype) return false;
   if (rcode && row.rcode !== rcode) return false;
   return withinRange(row.at, range);
 }
 
-// Группа действия аудита для пилюль типов (лаба 16). Фаза 1 знает только
-// login/login.fail/logout и node.check — остальные префиксы на будущее.
 export function auditGroup(action) {
   if (action === "login" || action === "login.fail" || action === "logout") return "login";
   const prefix = action.split(".")[0];
+  if (prefix === "totp" || prefix === "password") return "login";
+  if (prefix === "oauth") return "oauth";
+  if (prefix === "client" || prefix === "lists") return "acl";
+  if (prefix === "upstream") return "settings";
+  if (prefix === "domain" || prefix === "template") return "service";
   if (["node", "session", "service", "settings", "acl"].includes(prefix)) return prefix;
   return "other";
 }
 
-// Человекочитаемые детали аудита: [{k, v}] — k отдаётся в t() компонентом
-// (detIp/detId/detNodeOk/detNodeFail), raw — непонятный payload как есть.
+export function sortRows(rows, key, dir) {
+  const mul = dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const va = a[key];
+    const vb = b[key];
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === "number" && typeof vb === "number") return (va - vb) * mul;
+    return String(va).localeCompare(String(vb), undefined, { numeric: true }) * mul;
+  });
+}
+
 export function auditDetail(_action, raw) {
   if (!raw || raw === "{}") return [];
   let parsed;
@@ -143,7 +137,6 @@ export function auditDetail(_action, raw) {
   return Object.entries(parsed).map(([k, v]) => ({ k, v }));
 }
 
-// Склейка страниц: дубликаты по id (двойной клик «Загрузить ещё») отбрасываются.
 export function mergeById(prev, add) {
   const base = prev || [];
   const seen = new Set(base.map((r) => r.id));

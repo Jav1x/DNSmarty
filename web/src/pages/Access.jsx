@@ -10,27 +10,11 @@ import Switch from "../ui/Switch";
 import TrashButton from "../ui/TrashButton";
 import { parseCidr } from "../lib/util";
 
-/* «Доступ» (.design-lab/lab12.html): сводка allow/deny, единая таблица правил
-   с колонкой «заблокировано 24ч» (GET /api/stats/acl; сбой эндпоинта — «—»),
-   модалка правила: live-валидация CIDR (parseCidr), сегмент allow/deny,
-   превью приоритета, свитч, корзина 🗑 в футере. */
-
-// Число по-русски: 1 правило / 2–4 правила / 5+ правил; en — обычное множественное.
-function ruleWord(n, lang) {
-  if (lang === "ru") {
-    if (n % 10 === 1 && n % 100 !== 11) return "правило";
-    if ([2, 3, 4].includes(n % 10) && !(n % 100 >= 12 && n % 100 <= 14)) return "правила";
-    return "правил";
-  }
-  return n === 1 ? "rule" : "rules";
-}
-
 function ipToInt(ip) {
   const o = ip.split(".").map(Number);
   return BigInt(((o[0] * 256 + o[1]) * 256 + o[2]) * 256 + o[3]);
 }
 
-// Адрес сразу за подсетью — «мимо правила» в превью лабы 12 (/32 → ip+1).
 function nextAddr(ip, addrs) {
   const n = ipToInt(ip) + BigInt(addrs);
   return [n >> 24n & 255n, n >> 16n & 255n, n >> 8n & 255n, n & 255n].join(".");
@@ -42,11 +26,9 @@ export function Access() {
   const [error, setError] = useState("");
   const [allowOn, setAllowOn] = useState(true);
   const [denyOn, setDenyOn] = useState(true);
-  // hits: {id: n} из /api/stats/acl; null — не ответили или сбой («—» в колонке).
   const [hits, setHits] = useState(null);
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState("all");
-  // Черновик модалки + снимок для счётчика изменённых полей.
   const [draft, setDraft] = useState(null);
   const [base, setBase] = useState(null);
   const [ask, confirmRow] = useConfirm();
@@ -61,7 +43,6 @@ export function Access() {
       setError("");
     } catch (e) { setError(e); }
   }
-  // «Заблокировано 24ч» по правилам. Сбой — колонка «—», страница работает дальше.
   function loadHits() {
     api("/api/stats/acl")
       .then((out) => {
@@ -73,7 +54,6 @@ export function Access() {
   }
   useEffect(() => { load(); loadHits(); }, []);
 
-  // Toggle sends both flags: the endpoint sets the pair in one transaction.
   async function toggleKinds(allowEnabled, denyEnabled) {
     const prev = { allowOn, denyOn };
     setAllowOn(allowEnabled);
@@ -146,7 +126,6 @@ export function Access() {
       </div>
       <Err text={error} />
 
-      {/* сводка: два списка и их состояние (лаба 12) */}
       <div className="kinds">
         {[
           ["allow", t("allowServe"), t("allowServeSub"), allowOn, (v) => toggleKinds(v, denyOn), kindCount("allow")],
@@ -155,7 +134,7 @@ export function Access() {
           <div className={`kind ${kind}`} key={kind}>
             <span className="kt"><b>{title}</b><span>{sub}</span></span>
             <span className="kstat">
-              {n} {ruleWord(n, lang)} · <b>{on ? t("enabled") : t("listDisabled")}</b>
+              {n} {t("ruleWord", { n })} · <b>{on ? t("enabled") : t("listDisabled")}</b>
               {" "}
               <Switch on={on} onChange={toggle} label={`${title}: ${on ? t("enabled") : t("listDisabled")}`} />
             </span>
@@ -176,8 +155,7 @@ export function Access() {
             {data === null && <SkeletonRows cols={5} rows={3} />}
             {data !== null && filtered.map((c) => {
               const kind = c.list_kind || "allow";
-              // Эндпоинт молчит о выключенных правилах (и о правилах без попаданий) —
-              // когда он ответил, лаба 12 показывает «0», «—» остаётся только при сбое.
+
               const hit = hits === null ? null : (hits[c.id] ?? 0);
               return (
                 <tr key={c.id} className="click" onClick={(e) => { if (!e.target.closest("button")) openEditor(c); }}>
@@ -221,18 +199,19 @@ export function Access() {
       >
         {draft && (
           <form onSubmit={save}>
-            {/* Сеть: кого касается правило — CIDR с живой валидацией (лаба 12) */}
+
             <section className="sect">
               <h3>{t("netSect")}<small>{t("netSectSub")}</small></h3>
               <div className="sbody f">
                 <label htmlFor="rule-cidr">CIDR</label>
                 <input id="rule-cidr" spellCheck={false} placeholder="198.51.100.10/32" value={draft.cidr}
                   onChange={(e) => setDraft({ ...draft, cidr: e.target.value })} />
-                {draft.cidr.trim() !== "" && <div className={`hint ${verdict.ok ? "ok" : "bad"}`}>{verdict.msg}</div>}
+                {draft.cidr.trim() !== "" && verdict?.key && (
+                  <div className={`hint ${verdict.ok ? "ok" : "bad"}`}>{t(verdict.key, verdict.params)}</div>
+                )}
               </div>
             </section>
 
-            {/* Действие: сегмент allow/deny и превью приоритета (лаба 12) */}
             <section className="sect">
               <h3>{t("actSect")}<small>{t("actSectSub")}</small></h3>
               <div className="sbody">
@@ -255,7 +234,6 @@ export function Access() {
               </div>
             </section>
 
-            {/* Прочее: метка и включённость */}
             <section className="sect">
               <h3>{t("otherSect")}</h3>
               <div className="sbody f">

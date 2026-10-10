@@ -44,7 +44,7 @@ type StaleError struct {
 }
 
 func (e *StaleError) Error() string {
-	return fmt.Sprintf("у агента снимок новее: %d", e.Have)
+	return fmt.Sprintf("agent has a newer snapshot: %d", e.Have)
 }
 
 // Pool keeps one HTTP client per node so keep-alive connections are reused across push cycles.
@@ -119,7 +119,7 @@ func (p *Pool) do(ctx context.Context, t Target, method, path string, body []byt
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("нет связи с %s: %w", t.addr(), err)
+		return nil, fmt.Errorf("Cannot reach %s: %w", t.addr(), err)
 	}
 	return resp, nil
 }
@@ -138,10 +138,10 @@ func (p *Pool) Check(ctx context.Context, t Target) (Health, error) {
 	}
 	defer drain(resp)
 	if resp.StatusCode != http.StatusOK {
-		return h, fmt.Errorf("агент ответил %s", resp.Status)
+		return h, fmt.Errorf("agent replied %s", resp.Status)
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&h); err != nil {
-		return h, fmt.Errorf("агент ответил не JSON: %w", err)
+		return h, fmt.Errorf("agent replied non-JSON: %w", err)
 	}
 	return h, nil
 }
@@ -164,12 +164,12 @@ func (p *Pool) Push(ctx context.Context, t Target, body any) error {
 			Version int64 `json:"version"`
 		}
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&out); err != nil {
-			return fmt.Errorf("конфиг не принят: %s", resp.Status)
+			return fmt.Errorf("config rejected: %s", resp.Status)
 		}
 		return &StaleError{Have: out.Version}
 	default:
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("конфиг не принят: %s %s", resp.Status, bytes.TrimSpace(b))
+		return fmt.Errorf("config rejected: %s %s", resp.Status, bytes.TrimSpace(b))
 	}
 }
 
@@ -187,7 +187,7 @@ func (p *Pool) FetchStats(ctx context.Context, t Target) (StatsBody, error) {
 	}
 	defer drain(resp)
 	if resp.StatusCode != http.StatusOK {
-		return out, fmt.Errorf("статистика: %s", resp.Status)
+		return out, fmt.Errorf("stats: %s", resp.Status)
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&out); err != nil {
 		return out, err

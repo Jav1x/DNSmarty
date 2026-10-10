@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare, statsPath, clientStatsPath, cleanClientIp, pwStrength, deviceIcon, hwRows } from './util'
+import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare, statsPath, clientStatsPath, cleanClientIp, pwStrength, deviceIcon, hwRows, fmtUptime, fmtMbps } from './util'
 
 describe('normFqdn', () => {
   it('lowercases and trims trailing dot', () => expect(normFqdn(' Example.COM. ')).toBe('example.com'))
 })
 describe('parseCidr', () => {
-  it('/32 single', () => expect(parseCidr('198.51.100.7/32').msg).toMatch(/одиночный адрес/))
+  it('/32 single', () => expect(parseCidr('198.51.100.7/32').key).toBe('cidrSingle'))
   it('/24 count', () => expect(parseCidr('10.0.0.0/24').addrs).toBe(256))
   it('bad octet', () => expect(parseCidr('999.0.0.0/24').ok).toBe(false))
   it('bad mask', () => expect(parseCidr('10.0.0.0/40').ok).toBe(false))
@@ -20,11 +20,9 @@ describe('fmtBytes', () => {
   it('formats MB', () => expect(fmtBytes(1024*1024*5)).toMatch(/^5(\.0)? MB$/))
 })
 describe('protoOf', () => {
-  // Закреплённые случаи из брифа (лаба 13).
   it('https:// → DoH', () => expect(protoOf('https://cloudflare-dns.com/dns-query')).toBe('doh'))
   it('host:853 → DoT', () => expect(protoOf('dns.quad9.net:853')).toBe('dot'))
   it('ip:53 → UDP', () => expect(protoOf('9.9.9.9:53')).toBe('udp'))
-  // Края: tls:// тоже DoT; порт у https:// не меняет DoH; регистр схемы не важен.
   it('tls:// → DoT', () => expect(protoOf('tls://dns.google')).toBe('dot'))
   it('https:// with port is still DoH', () => expect(protoOf('https://dns.google:443/dns-query')).toBe('doh'))
   it('case-insensitive scheme', () => expect(protoOf('HTTPS://dns.google/dns-query')).toBe('doh'))
@@ -34,7 +32,6 @@ describe('ago', () => {
   it('seconds', () => expect(ago(new Date(Date.now()-12000).toISOString(), tRu)).toBe('12 с'))
   it('minutes', () => expect(ago(new Date(Date.now()-26*60000).toISOString(), tRu)).toBe('26 мин'))
 })
-// lab16 обзор: живые спарклайны hero-банда (задача 9).
 describe('pushHist', () => {
   it('keeps the last n points', () => {
     let h = []
@@ -48,7 +45,6 @@ describe('pushHist', () => {
   })
 })
 describe('sparkPaths', () => {
-  // viewBox 200×40 как в lab16: отступ 3 сверху/снизу.
   it('line and closed area over the full range', () => {
     const { line, fill } = sparkPaths([0, 40], 200, 40)
     expect(line).toBe('M0,37 L200,3')
@@ -76,7 +72,6 @@ describe('aclShare', () => {
   })
 })
 
-// Статистика (задача 10): адреса запросов и очистка ввода IP клиента.
 describe('statsPath', () => {
   it('window only', () => expect(statsPath('1h')).toBe('/api/stats?window=1h'))
   it('all window is the literal "all"', () => expect(statsPath('all')).toBe('/api/stats?window=all'))
@@ -93,9 +88,7 @@ describe('cleanClientIp', () => {
   })
 })
 
-// Аккаунт (лаба 14, задача 12): сила пароля для живого индикатора из 4 сегментов.
 describe('pwStrength', () => {
-  // Закреплённые случаи из брифа.
   it('pin: short lowercase is 0', () => expect(pwStrength('abc')).toBe(0))
   it('pin: xkcd-style password is at least 3', () => expect(pwStrength('Tr0ub4dour&3')).toBe(3))
   it('empty is 0', () => expect(pwStrength('')).toBe(0))
@@ -104,7 +97,6 @@ describe('pwStrength', () => {
   it('17 chars with symbol reaches the cap', () => expect(pwStrength('Tr0ub4dour&3n1gma')).toBe(4))
 })
 
-// Аккаунт (лаба 14, задача 12): иконка устройства по user-agent.
 describe('deviceIcon', () => {
   it('iPhone is a phone', () => expect(deviceIcon('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')).toBe('📱'))
   it('Android is a phone', () => expect(deviceIcon('Mozilla/5.0 (Linux; Android 14; Pixel 8)')).toBe('📱'))
@@ -114,6 +106,16 @@ describe('deviceIcon', () => {
   it('undefined UA defaults to computer', () => expect(deviceIcon(undefined)).toBe('💻'))
 })
 
+describe('fmtUptime', () => {
+  it('dash for missing', () => expect(fmtUptime(null)).toBe('—'))
+  it('seconds', () => expect(fmtUptime(9)).toBe('9s'))
+  it('hours and minutes', () => expect(fmtUptime(2 * 3600 + 5 * 60)).toBe('2h 5m'))
+  it('days and hours', () => expect(fmtUptime(2 * 86400 + 3 * 3600)).toBe('2d 3h'))
+})
+describe('fmtMbps', () => {
+  it('dash for missing', () => expect(fmtMbps(null)).toBe('—'))
+  it('one decimal', () => expect(fmtMbps(12.34)).toBe('12.3 Mbps'))
+})
 describe('hwRows', () => {
   it('empty report renders dashes', () => {
     expect(hwRows({}).map(([, v]) => v)).toEqual(['—', '—', '—', '—'])

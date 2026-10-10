@@ -40,6 +40,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /install/node.sh", s.installScript)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/login/totp", s.loginTOTP)
+	mux.HandleFunc("GET /api/auth/providers", s.oauthProviders)
+	mux.HandleFunc("GET /api/auth/oauth/{provider}/login", s.oauthLogin)
+	mux.HandleFunc("GET /api/auth/oauth/{provider}/callback", s.oauthCallback)
+	mux.HandleFunc("GET /api/settings/oauth", s.withAuth(s.oauthSettings))
+	mux.HandleFunc("POST /api/settings/oauth", s.withAuth(s.oauthSettingsSave))
+	mux.HandleFunc("GET /api/account/oauth", s.withAuth(s.oauthAccount))
+	mux.HandleFunc("GET /api/account/oauth/{provider}/link", s.withAuth(s.oauthLink))
+	mux.HandleFunc("DELETE /api/account/oauth/{provider}", s.withAuth(s.oauthUnlink))
 	mux.HandleFunc("POST /api/logout", s.withAuth(s.logout))
 	mux.HandleFunc("GET /api/me", s.withAuth(s.me))
 	mux.HandleFunc("POST /api/password", s.withAuth(s.passwordChange))
@@ -54,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/overview", s.withAuth(s.overview))
 	mux.HandleFunc("GET /api/overview/series", s.withAuth(s.overviewSeries))
 	mux.HandleFunc("GET /api/nodes", s.withAuth(s.nodes))
+	mux.HandleFunc("PUT /api/nodes/order", s.withAuth(s.nodesReorder))
 	mux.HandleFunc("POST /api/nodes", s.withAuth(s.nodesCreate))
 	mux.HandleFunc("POST /api/nodes/{id}/connect", s.withAuth(s.nodesConnect))
 	mux.HandleFunc("POST /api/nodes/{id}/key", s.withAuth(s.nodesKey))
@@ -105,7 +114,7 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) spa(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		writeErr(w, http.StatusNotFound, "not_found", "Нет такого метода API.")
+		writeErr(w, http.StatusNotFound, "not_found", "No such API method.")
 		return
 	}
 	sub, err := fs.Sub(distFS, "dist")

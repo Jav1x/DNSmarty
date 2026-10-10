@@ -21,16 +21,6 @@ import (
 	"dnsmarty/internal/store"
 )
 
-/*
-Закрепление контракта «Ноды» со стороны UI (задача 7, редизайн): выключатель
-«Нода отключена» в модалке отправляет `{enabled:false}` на эндпоинт обновления
-ноды вместе с остальными полями NodeInput, кнопка 🗑 — на DELETE. Бэкенд не
-меняется: тест проверяет, что существующая панель принимает disabled-обновление,
-что GET /api/nodes после него отдаёт enabled=false и что нода убирается DELETE'ом.
-Маршрут обновления — POST /api/nodes/{id}; PUT в замороженной серверной таблице
-маршрутов отсутствует (бриф говорил PUT — обогнано тестом, верб не добавлялся).
-*/
-
 func TestNodeDisableContract(t *testing.T) {
 	ctx := context.Background()
 	pg, err := postgres.Run(ctx, "postgres:16",
@@ -64,7 +54,6 @@ func TestNodeDisableContract(t *testing.T) {
 	t.Cleanup(ts.Close)
 	sess := login(t, ts.URL, "admin", "panel-pass-long")
 
-	// Нода создаётся обычным путём панели: POST /api/nodes → {node, key, image}.
 	code, raw := apiNodes(t, ts.URL, sess, http.MethodPost, "/api/nodes", `{
 		"name": "edge",
 		"role": "dns",
@@ -86,17 +75,14 @@ func TestNodeDisableContract(t *testing.T) {
 		t.Fatalf("POST /api/nodes: %v %s", err, raw)
 	}
 	if created.Node.ID == "" || created.Key == "" || created.Image == "" {
-		t.Fatalf("создание ноды вернуло пустые поля: %#v", created)
+		t.Fatalf("create node returned empty fields: %#v", created)
 	}
 	id := created.Node.ID
 
-	// Санити: сразу после создания нода включена.
 	if got := nodeByID(t, ts.URL, sess, id); got == nil || !got.Enabled {
-		t.Fatalf("после создания ждём enabled=true: %#v", got)
+		t.Fatalf("after create wanted enabled=true: %#v", got)
 	}
 
-	// Отключение: полное тело NodeInput с enabled:false. Верб — POST,
-	// как в серверной таблице маршрутов (server.go: POST /api/nodes/{id}).
 	body := fmt.Sprintf(`{
 		"name": "edge",
 		"role": "dns",
@@ -117,42 +103,38 @@ func TestNodeDisableContract(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 	if n := auditCount(ctx, t, pool, "node.disable"); n != 1 {
-		t.Fatalf("node.disable в аудите: %d строк, ждём 1", n)
+		t.Fatalf("node.disable in audit: %d rows, want 1", n)
 	}
 	code, raw = apiNodes(t, ts.URL, sess, http.MethodPost, "/api/nodes/"+id, body)
 	if code != http.StatusOK {
-		t.Fatalf("повторное отключение: %d %s", code, raw)
+		t.Fatalf("second disable: %d %s", code, raw)
 	}
 	if n := auditCount(ctx, t, pool, "node.disable"); n != 1 {
-		t.Fatalf("повторное отключение без изменения добавило строку аудита: %d", n)
+		t.Fatalf("no-op disable added an audit row: %d", n)
 	}
 
-	// Список после отключения: enabled=false (и, следовательно, fresh=false).
 	off := nodeByID(t, ts.URL, sess, id)
 	if off == nil {
-		t.Fatal("нода пропала из списка после отключения")
+		t.Fatal("node missing from list after disable")
 	}
 	if off.Enabled {
-		t.Fatalf("GET /api/nodes вернул enabled=true после отключения: %#v", off)
+		t.Fatalf("GET /api/nodes returned enabled=true after disable: %#v", off)
 	}
 	if off.Fresh {
-		t.Fatalf("выключенная нода не может быть fresh: %#v", off)
+		t.Fatalf("disabled node must not be fresh: %#v", off)
 	}
 
-	// PUT не маршрутизируется: путь проваливается в SPA-обёртку, которая отвечает
-	// «Нет такого метода API» (404/not_found). Бриф говорил PUT — тест это обогнал.
 	code, raw = apiNodes(t, ts.URL, sess, http.MethodPut, "/api/nodes/"+id, body)
 	if code != http.StatusNotFound {
-		t.Fatalf("PUT /api/nodes/{id}: %d (ждём 404 — маршрута PUT нет) %s", code, raw)
+		t.Fatalf("PUT /api/nodes/{id}: %d (want 404 — no PUT route) %s", code, raw)
 	}
 
-	// Кнопка 🗑: DELETE /api/nodes/{id} → ок, нода уходит из списка.
 	code, raw = apiNodes(t, ts.URL, sess, http.MethodDelete, "/api/nodes/"+id, "")
 	if code != http.StatusOK {
 		t.Fatalf("DELETE /api/nodes/{id}: %d %s", code, raw)
 	}
 	if got := nodeByID(t, ts.URL, sess, id); got != nil {
-		t.Fatalf("DELETE не удалил ноду: %#v", got)
+		t.Fatalf("DELETE did not remove the node: %#v", got)
 	}
 }
 
@@ -165,7 +147,6 @@ func auditCount(ctx context.Context, t *testing.T, pool *pgxpool.Pool, action st
 	return n
 }
 
-// apiNodes делает авторизированный запрос к /api/nodes и возвращает статус и тело.
 func apiNodes(t *testing.T, base string, sess session, method, path, body string) (int, []byte) {
 	t.Helper()
 	req, err := http.NewRequest(method, base+path, strings.NewReader(body))
@@ -189,7 +170,6 @@ func apiNodes(t *testing.T, base string, sess session, method, path, body string
 	return resp.StatusCode, raw
 }
 
-// nodeByID читает GET /api/nodes и находит ноду по id (nil — нет в списке).
 func nodeByID(t *testing.T, base string, sess session, id string) *store.Node {
 	t.Helper()
 	code, raw := apiNodes(t, base, sess, http.MethodGet, "/api/nodes", "")

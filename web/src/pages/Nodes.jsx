@@ -1,15 +1,3 @@
-// Ноды — порт lab10 (.design-lab/lab10.html): drag-таблица (порядок строк —
-// локальный: сервер сортирует ноды по роли и имени, свой порядок ротации — фаза 2),
-// bulkbar (В ротацию / Из ротации / Отключить / Удалить), модалка редактирования:
-// Состояние (read-only, hw-поля «—» до фазы 2), Виталы (свитчи «В ротации» и
-// «Нода отключена» — одно булево enabled бэкенда; роль ограничена dns/proxy),
-// ключ связи (перевыпуск ⟳ — показывается один раз), 🗑 через ConfirmDialog.
-// Сетевой контракт прежний: GET /api/nodes; POST /api/nodes; POST /api/nodes/{id}
-// (обновление, принимает enabled:false; верб — POST, бриф говорил PUT, но маршрута
-// PUT в серверной таблице нет — закреплено тестом internal/integration/node_disable_test.go);
-// POST /api/nodes/{id}/connect (проверка связи, {ok, error}); POST
-// /api/nodes/{id}/key; DELETE /api/nodes/{id}.
-// Визард «Новая нода» — web/src/pages/nodes/NewNodeModal.jsx (задача 8).
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useLoad } from "../hooks/useLoad";
@@ -21,11 +9,10 @@ import Modal from "../ui/Modal";
 import Switch from "../ui/Switch";
 import Tip from "../ui/Tip";
 import TrashButton from "../ui/TrashButton";
-import { ago, hwRows } from "../lib/util";
+import { moveId } from "../lib/nodes";
+import { ago, fmtBytes, fmtMbps, fmtUptime, hwRows } from "../lib/util";
 import NewNodeModal from "./nodes/NewNodeModal.jsx";
 
-// NodeInput из строки сервера (+ явная замена enabled для bulk-операций).
-// Обновление принимает только полное тело — шлём все поля ноды.
 function nodeInput(n, enabled) {
   return {
     name: String(n.name || "").trim(),
@@ -39,7 +26,6 @@ function nodeInput(n, enabled) {
   };
 }
 
-// Проверка связи (ok/error из лабы); вызывается строкой ⟳ и модалкой редактирования.
 function nodeConnect(id) {
   return api(`/api/nodes/${id}/connect`, { method: "POST" });
 }
@@ -49,13 +35,9 @@ export function Nodes() {
   const { data, loading, error, setError, reload } = useLoad("/api/nodes");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(() => new Set());
-  // drag-перестановка строк (лаба 10): dragId — источник, overId — приёмник;
-  // порядок строк локальный, reload возвращает серверную сортировку.
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
-  // order — id-шники после перетаскивания; null — серверный порядок.
   const [order, setOrder] = useState(null);
-  // open: null | {kind:"edit", id} | {kind:"new"}
   const [open, setOpen] = useState(null);
   const [ask, confirmRow] = useConfirm();
   const toast = useToast();
@@ -63,7 +45,6 @@ export function Nodes() {
   const nodes = data || [];
   useEffect(() => { setOrder(null); }, [data]);
 
-  // Переставленный список: знакомые id в порядке drag'а, новые — в хвосте.
   const placed = useMemo(() => {
     if (!order) return nodes;
     const ids = [...order.filter((id) => nodes.some((n) => n.id === id)),
@@ -89,14 +70,13 @@ export function Nodes() {
   const selNodes = nodes.filter((n) => selected.has(n.id));
   const allSelected = list.length > 0 && list.every((n) => selected.has(n.id));
 
-  // Общий хвост мутаций: очистка выделения, перечитывание, toast; ошибки — в баннер.
   async function withMutation(run, done = t("saved")) {
     try {
       await run();
       setSelected(new Set());
       reload();
       toast(done);
-    } catch (e) { setError(e); reload(); } // успехи до сбоя в bulk-цикле уже на сервере
+    } catch (e) { setError(e); reload(); }
   }
   function bulkEnabled(next) {
     const targets = selNodes.filter((n) => n.enabled !== next);
@@ -129,15 +109,14 @@ export function Nodes() {
     } catch (e) { setError(e); }
   }
   function reorder(dropId) {
-    setOrder((cur) => {
-      const ids0 = cur || nodes.map((n) => n.id);
-      const from = ids0.indexOf(dragId);
-      const to = ids0.indexOf(dropId);
-      if (from < 0 || to < 0 || from === to) return cur;
-      const ids = [...ids0];
-      const [moved] = ids.splice(from, 1);
-      ids.splice(to, 0, moved);
-      return ids;
+    const ids0 = order || nodes.map((n) => n.id);
+    const ids = moveId(ids0, dragId, dropId);
+    if (ids === ids0) return;
+    setOrder(ids);
+    api("/api/nodes/order", { method: "PUT", body: JSON.stringify({ ids }) }).catch((e) => {
+      setError(e);
+      setOrder(null);
+      reload();
     });
   }
 
@@ -181,10 +160,11 @@ export function Nodes() {
               <th>{t("region")}</th>
               <th>{t("agent")}</th>
               <th>{t("rotCol")}</th>
+              <th>{t("q24")}</th>
               <th></th>
             </tr></thead>
             <tbody>
-              {loading && !data && <SkeletonRows cols={12} />}
+              {loading && !data && <SkeletonRows cols={13} />}
               {data !== null && list.map((n) => {
                 const st = statusOf(n, t, err);
                 const seen = n.last_seen_at ? ago(n.last_seen_at, t) : "—";
@@ -238,6 +218,7 @@ export function Nodes() {
                         {!n.enabled ? t("rotDis") : n.fresh ? t("rotIn") : t("rotOut")}
                       </span>
                     </td>
+                    <td className="num">{Number(n.queries_24h || 0).toLocaleString()}</td>
                     <td>
                       <span className="acts">
                         <button type="button" className="abtn" title={t("edit")} onClick={() => setOpen({ kind: "edit", id: n.id })}>✎</button>
@@ -248,7 +229,7 @@ export function Nodes() {
                   </tr>
                 );
               })}
-              {data !== null && list.length === 0 && <EmptyRow colSpan={12}>{t("noNodes")}</EmptyRow>}
+              {data !== null && list.length === 0 && <EmptyRow colSpan={13}>{t("noNodes")}</EmptyRow>}
             </tbody>
           </table>
         </div>
@@ -272,8 +253,6 @@ export function Nodes() {
   );
 }
 
-// Лампа + тултип по состоянию ноды: включённая и свежая — синяя пульс,
-// уставший агент — янтарная, потерянная связь — красная, отключённая — серая.
 function statusOf(n, t, err) {
   if (!n.enabled) return { lamp: "dis", tip: t("disLampTip") };
   const seen = n.last_seen_at ? ago(n.last_seen_at, t) : "—";
@@ -287,8 +266,6 @@ function statusOf(n, t, err) {
   return { lamp: "off", tip: t("offlineTip", { ago: seen }) + (bad ? `\n${bad}` : "") };
 }
 
-// Плашка-флаг региона (в лабе — эмодзи стран; регион в API — произвольная метка,
-// поэтому код региона в лабовой плашке).
 function monoFlag(region) {
   return region.slice(0, 2).toUpperCase();
 }
@@ -300,18 +277,15 @@ function ipOf(n) {
   return n.public_ipv4 || n.public_ipv6 || "—";
 }
 
-/* Модалка редактирования (лаба 10): Состояние read-only, Виталы, Ключ; в футере
-   🗑. Обновление шлёт полный NodeInput — грязь считает черновик против снимка. */
 function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
   const { t, err } = useI18n();
   const [draft, setDraft] = useState(() => nodeInput(node, node.enabled));
   const [base] = useState(() => nodeInput(node, node.enabled));
-  const [key, setKey] = useState(""); // разовый показ ключа после перевыпуска
+  const [key, setKey] = useState("");
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setDraft({ ...draft, [k]: e.target.value });
 
-  // dirty: текстовые поля по строкам, порт — по числу («224» и 224 совпадают).
   const CMP = ["name", "role", "public_ipv4", "public_ipv6", "region", "agent_host", "enabled"];
   const dirty = CMP.filter((k) => String(draft[k] ?? "") !== String(base[k] ?? "")).length
     + (Number(draft.agent_port) !== Number(base.agent_port) ? 1 : 0);
@@ -356,7 +330,7 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
       await navigator.clipboard.writeText(key);
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
-    } catch { /* нет clipboard — ключ остаётся виден в .tok */ }
+    } catch {}
   }
 
   const seen = node.last_seen_at ? ago(node.last_seen_at, t) : "—";
@@ -364,6 +338,8 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
   const stateText = !node.enabled
     ? t("rotDis")
     : node.fresh ? `${t("online")} · ${seen}` : t("offlineTip", { ago: seen });
+  const hw = node.last_hw && typeof node.last_hw === "object" ? node.last_hw : {};
+  const iface = hw.iface;
 
   return (
     <Modal
@@ -380,9 +356,9 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
         </>
       )}
     >
-      {/* 1 · состояние: read-only снимок, железо из последнего отчёта агента */}
+
       <section className="sect">
-        <h3>{t("stateSect")}<small>{t("stateSectSub")}</small></h3>
+        <h3>{t("stateSect")}<small>{hw.uptime_sec != null ? fmtUptime(hw.uptime_sec) : t("stateSectSub")}</small></h3>
         <div className="sbody">
           <div className="scol">
             <div className="col">
@@ -390,21 +366,29 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
               <div className="kv"><span>{t("agent")}</span>{node.agent_version
                 ? <b className={node.needs_update ? "ver old" : "ver"}>{node.agent_version}</b>
                 : <b>—</b>}</div>
-              <div className="kv"><span>{t("q24")}</span><b>—</b></div>
-              <div className="kv"><span>{t("proxySessKv")}</span><b>—</b></div>
+              <div className="kv"><span>{t("q24")}</span><b>{Number(node.queries_24h || 0).toLocaleString()}</b></div>
+              <div className="kv"><span>{t("proxySessKv")}</span><b>{Number(node.sessions_24h || 0).toLocaleString()}</b></div>
+              <div className="kv"><span>{t("bytes24")}</span><b>{fmtBytes(node.bytes_24h || 0)}</b></div>
             </div>
             <div className="col">
-              {hwRows(node.last_hw || {}).map(([k, v]) => (
+              {hwRows(hw).map(([k, v]) => (
                 <div className="kv" key={k}><span>{t(k)}</span><b>{v}</b></div>
               ))}
             </div>
           </div>
+          {iface && (
+            <div className="mainif">
+              <span className="mic"><b>{iface.name || "—"}</b></span>
+              <span className="pill on">{t("ifMain")}</span>
+              <span className="ipv">{iface.ip || "—"}</span>
+              <span className="ifload">↓ {fmtMbps(iface.rx_mbps)} <span className="sep">/</span> ↑ {fmtMbps(iface.tx_mbps)}</span>
+              <span className="ifok">{t("ifUp")}</span>
+            </div>
+          )}
           {!node.last_hw && <div className="hint">{t("stateHwWait")}</div>}
         </div>
       </section>
 
-      {/* 2 · виталы: то, что реально хранит бэкенд. Вес не заводим — он
-          принадлежит привязке домен↔нода и приедет со своим контрактом. */}
       <section className="sect">
         <h3>{t("vitalsSect")}<small>{t("vitalsSectSub")}</small></h3>
         <div className="sbody f">
@@ -463,7 +447,6 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
         </div>
       </section>
 
-      {/* 3 · ключ связи: панель хранит его только зашифрованным; показ — после ⟳ */}
       <section className="sect">
         <h3>{t("keySect")}<small>{t("keySectSub")}</small></h3>
         <div className="sbody f">

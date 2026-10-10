@@ -2,9 +2,13 @@ import { useState } from "react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import { useLoad } from "../hooks/useLoad";
-import { Err, SkeletonRows, StatusLamp } from "../components/Bits";
-import { useConfirm } from "../components/Toast";
-import { parseDomainsInput, templateSummary } from "../lib/services";
+import { Err, SkeletonRows } from "../components/Bits";
+import { useConfirm, useToast } from "../components/Toast";
+import { Modal } from "../ui/Modal";
+import Lamp from "../ui/Lamp";
+import Switch from "../ui/Switch";
+import TrashButton from "../ui/TrashButton";
+import { parseDomainsInput, templateSummary, isBuiltinTemplate, readTemplatePayload, templatePayloadFromService } from "../lib/services";
 import { fmtBytes, shares } from "../lib/util";
 import { BUILTIN_TEMPLATES } from "../data/templates";
 
@@ -16,72 +20,64 @@ function strategyLabel(s, t) {
   return t("rr");
 }
 
-function proxyLinks(form, nodes) {
-  const links = [];
-  for (const n of nodes) {
-    if (form.get(`on_${n.id}`) === "on") {
-      links.push({ proxy_id: n.id, weight: Number(form.get(`w_${n.id}`) || 1) });
-    }
-  }
-  return links;
+function weightsFrom(svc) {
+  return Object.fromEntries((svc?.proxies || []).map((p) => [p.proxy_id, { on: p.on, weight: p.weight }]));
 }
 
-function serviceBody(form, nodes) {
-  return {
-    name: form.get("name"),
-    strategy: form.get("strategy"),
-    comment: form.get("comment") || "",
-    enabled: form.get("enabled") === "on",
-    proxies: proxyLinks(form, nodes),
-  };
+function proxiesFrom(nodes, weights) {
+  return nodes.filter((n) => weights[n.id]?.on).map((n) => ({
+    proxy_id: n.id,
+    weight: Number(weights[n.id].weight) || 1,
+  }));
 }
 
-function ProxyFields({ nodes, weights }) {
+function RouteFields({ idPrefix = "svc", nodes, weights, setWeight, strategy, setStrategy }) {
   const { t } = useI18n();
+  const onNodes = nodes.filter((n) => weights[n.id]?.on);
+  const pct = shares(onNodes.map((n) => Number(weights[n.id]?.weight) || 0));
+  const pctById = Object.fromEntries(onNodes.map((n, i) => [n.id, pct[i]]));
+  const strategyId = `${idPrefix}-strategy`;
   return (
-    <div className="row-actions">
-      {nodes.map((n) => {
-        const w = weights?.[n.id];
-        return (
-          <label className="weight check" key={n.id}>
-            <input type="checkbox" name={`on_${n.id}`} defaultChecked={!!w?.on} />
-            {n.name}
-            <input name={`w_${n.id}`} type="number" defaultValue={w?.weight || 1} min="1" max="1000" style={{ width: "4.5rem" }} aria-label={`${n.name} ${t("weight")}`} />
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
-function ServiceFields({ service, nodes }) {
-  const { t } = useI18n();
-  const weights = Object.fromEntries((service?.proxies || []).map((p) => [p.proxy_id, p]));
-  return (
-    <>
-      <div className="grid">
-        <div><label>{t("name")}</label><input name="name" defaultValue={service?.name} required /></div>
-        <div><label>{t("strategy")}</label><select name="strategy" defaultValue={service?.strategy || "round_robin"}><option value="round_robin">{t("rr")}</option><option value="weighted">{t("weighted")}</option><option value="sticky24">{t("sticky")}</option></select></div>
-        <div><label>{t("comment")}</label><input name="comment" defaultValue={service?.comment} /></div>
+    <section className="sect">
+      <h3>{t("routeSect")}</h3>
+      <div className="sbody f">
+        <div>
+          <label htmlFor={strategyId}>{t("strategy")}</label>
+          <select id={strategyId} value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+            <option value="round_robin">{t("rr")}</option>
+            <option value="weighted">{t("weighted")}</option>
+            <option value="sticky24">{t("sticky")}</option>
+          </select>
+        </div>
+        <div className="route">
+          {nodes.map((n) => (
+            <label className="line" key={n.id}>
+              <input type="checkbox" checked={!!weights[n.id]?.on} onChange={(e) => setWeight(n.id, { on: e.target.checked })} />
+              <span>{n.name}</span>
+              <input
+                type="number"
+                min="1"
+                max="1000"
+                aria-label={`${n.name} ${t("weight")}`}
+                value={weights[n.id]?.weight || 1}
+                onChange={(e) => setWeight(n.id, { weight: Number(e.target.value) })}
+              />
+              <b>{weights[n.id]?.on ? `${pctById[n.id] ?? 0}%` : ""}</b>
+            </label>
+          ))}
+          {!nodes.length && <p className="hint">{t("noLink")}</p>}
+        </div>
       </div>
-      <p><label className="check"><input type="checkbox" name="enabled" defaultChecked={service ? service.enabled : true} />{t("enabled")}</label></p>
-      <ProxyFields nodes={nodes} weights={weights} />
-    </>
+    </section>
   );
 }
 
-function ServiceCard({ svc, nodes, open, onToggle, reload, ask, setError }) {
+function ServiceCard({ svc, open, onToggle, onEdit, reload, ask, setError }) {
   const { t } = useI18n();
-  const onProxies = svc.proxies.filter((p) => p.on);
+  const onProxies = (svc.proxies || []).filter((p) => p.on);
   const pct = shares(onProxies.map((p) => p.weight));
-  async function save(event) {
-    event.preventDefault();
-    try {
-      await api(`/api/services/${svc.id}`, { method: "POST", body: JSON.stringify(serviceBody(new FormData(event.target), nodes)) });
-      reload();
-    } catch (err) { setError(err); }
-  }
-  function remove() {
+  function remove(event) {
+    event.stopPropagation();
     ask(t("confirmDelete", { name: svc.name }), async () => {
       try {
         await api(`/api/services/${svc.id}`, { method: "DELETE" });
@@ -89,34 +85,47 @@ function ServiceCard({ svc, nodes, open, onToggle, reload, ask, setError }) {
       } catch (err) { setError(err); }
     });
   }
+  function edit(event) {
+    event.stopPropagation();
+    onEdit(svc);
+  }
   return (
-    <section className="mod service-card">
-      <header className="row-actions">
-        <button type="button" className="ghost" aria-expanded={open} onClick={onToggle}>
-          <StatusLamp on={svc.enabled} />
-          <strong>{svc.name}</strong>
-        </button>
-        <span>{strategyLabel(svc.strategy, t)}</span>
-        <span>{t("domainCount", { n: svc.members.length })}</span>
-        <span>{t("serviceQueries", { n: svc.queries_24h })}</span>
-        <span>{fmtBytes(svc.bytes_24h)}</span>
-      </header>
-      {open && (
-        <div className="service-body">
-          <form onSubmit={save}>
-            <ServiceFields service={svc} nodes={nodes} />
-            <div className="row-actions">
-              <button type="submit">{t("save")}</button>
-              <button type="button" className="alarm" onClick={remove}>{t("delete")}</button>
-            </div>
-          </form>
-          {onProxies.length > 0 && (
-            <p className="mono">{onProxies.map((p, i) => `${p.proxy_name} ${pct[i]}%`).join(" · ")}</p>
-          )}
-          <MembersPanel svc={svc} reload={reload} ask={ask} setError={setError} />
+    <article className={`svc${open ? " open" : ""}${svc.enabled ? "" : " lampoff"}`}>
+      <div
+        className="svc-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={onToggle}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
+      >
+        <div className="sn">
+          <Lamp state={svc.enabled ? "on" : "dis"} tip={svc.enabled ? t("enabled") : t("nodeOff")} />
+          <b>{svc.name}</b>
+          <span className="cnt">{t("domainCount", { n: (svc.members || []).length })}</span>
         </div>
-      )}
-    </section>
+        <div className="sroute">
+          <span className="pill on">{strategyLabel(svc.strategy, t)}</span>
+          {onProxies.length
+            ? onProxies.map((p, i) => (
+              <span className="pill" key={p.proxy_id}>{p.proxy_name} {pct[i]}%</span>
+            ))
+            : <span className="pill">{t("routeEmpty")}</span>}
+        </div>
+        <div className="traf">
+          <b>{t("serviceQueries", { n: svc.queries_24h })}</b>
+          <span>{fmtBytes(svc.bytes_24h)}</span>
+        </div>
+        <div className="sacts" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <button type="button" className="abtn" title={t("edit")} onClick={edit}>✎</button>
+          <button type="button" className="abtn del" title={t("delete")} onClick={remove}>✕</button>
+          <span className="chev" aria-hidden="true">▶</span>
+        </div>
+      </div>
+      <div className="svc-dom">
+        <MembersPanel svc={svc} reload={reload} ask={ask} setError={setError} />
+      </div>
+    </article>
   );
 }
 
@@ -124,11 +133,10 @@ function MembersPanel({ svc, reload, ask, setError }) {
   const { t } = useI18n();
   const [text, setText] = useState("");
   const [match, setMatch] = useState("suffix");
-  const [bad, setBad] = useState([]);
+  const members = svc.members || [];
+  const parsed = parseDomainsInput(text);
   async function add(event) {
     event.preventDefault();
-    const parsed = parseDomainsInput(text);
-    setBad(parsed.bad);
     if (!parsed.ok.length) return;
     try {
       await api(`/api/services/${svc.id}/members`, {
@@ -136,7 +144,6 @@ function MembersPanel({ svc, reload, ask, setError }) {
         body: JSON.stringify({ members: parsed.ok.map((name) => ({ name, match, enabled: true, comment: "" })) }),
       });
       setText("");
-      setBad([]);
       reload();
     } catch (err) { setError(err); }
   }
@@ -158,105 +165,379 @@ function MembersPanel({ svc, reload, ask, setError }) {
     });
   }
   return (
-    <div className="members">
-      <form onSubmit={add}>
-        <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={t("pasteDomains")} aria-label={t("pasteDomains")} rows={3} />
-        <div className="row-actions">
+    <>
+      {!!members.length && (
+        <table className="dtable">
+          <thead>
+            <tr>
+              <th>{t("name")}</th>
+              <th>{t("match")}</th>
+              <th>{t("enabled")}</th>
+              <th>{t("queries")}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((m) => (
+              <tr key={m.id} className={m.enabled ? undefined : "dim"}>
+                <td className="dname">
+                  <span className={`dot${m.enabled ? "" : " off"}`} />
+                  {m.name}
+                </td>
+                <td>{m.match === "fqdn" ? t("fqdn") : t("suffix")}</td>
+                <td><Switch on={m.enabled} onChange={() => toggle(m)} label={t("enabled")} /></td>
+                <td className="num">{m.queries_24h}</td>
+                <td>
+                  <div className="acts2">
+                    <button type="button" className="abtn del" title={t("delete")} onClick={() => remove(m)}>✕</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {!members.length && <p className="empty">{t("noMembers")}</p>}
+      <form className="dadd" onSubmit={add}>
+        <div className="f grow">
+          <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={t("pasteDomains")} aria-label={t("pasteDomains")} rows={2} />
+        </div>
+        <div className="f">
           <select value={match} onChange={(e) => setMatch(e.target.value)} aria-label={t("match")}>
             <option value="suffix">{t("suffix")}</option>
             <option value="fqdn">{t("fqdn")}</option>
           </select>
-          <button type="submit">{t("addDomains")}</button>
         </div>
+        <button type="submit" className="btn sm" disabled={!parsed.ok.length}>{t("addDomains")}</button>
       </form>
-      {bad.map((b) => (
-        <p className="alarm" key={b.raw}>{b.raw}: {t(FQDN_REASON[b.reason] || "fqdnBadLabel", { s: b.raw })}</p>
-      ))}
-      <table>
-        <thead>
-          <tr><th>{t("name")}</th><th>{t("match")}</th><th>{t("queries")}</th><th></th></tr>
-        </thead>
-        <tbody>
-          {svc.members.map((m) => (
-            <tr key={m.id}>
-              <td className="mono">{m.name}</td>
-              <td>{m.match === "fqdn" ? t("fqdn") : t("suffix")}</td>
-              <td>{m.queries_24h}</td>
-              <td className="row-actions">
-                <button type="button" className="ghost tiny" onClick={() => toggle(m)}>{m.enabled ? t("disable") : t("enable")}</button>
-                <button type="button" className="ghost tiny" onClick={() => remove(m)}>{t("delete")}</button>
-              </td>
-            </tr>
+      {!!parsed.bad.length && (
+        <div className="dchips pad">
+          {parsed.bad.map((b) => (
+            <span key={b.raw} className="dchip bad">{b.raw}<i>{t(FQDN_REASON[b.reason] || "fqdnBadLabel")}</i></span>
           ))}
-        </tbody>
-      </table>
-      {!svc.members.length && <p className="empty">{t("noMembers")}</p>}
-    </div>
+        </div>
+      )}
+    </>
   );
 }
 
-function NewService({ nodes, templates, reload, setError, onDone }) {
+function SaveTemplateModal({ svc, onClose, reload }) {
   const { t } = useI18n();
-  const [tplId, setTplId] = useState("");
-  const [draft, setDraft] = useState(null);
-  const [matches, setMatches] = useState({});
-  const [text, setText] = useState("");
-  const tpl = templates.find((x) => x.id === tplId);
+  const toast = useToast();
+  const [name, setName] = useState(svc.name || "");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const payload = templatePayloadFromService(svc);
 
-  function pick(id) {
-    setTplId(id);
-    const found = templates.find((x) => x.id === id);
-    if (!found) {
-      setDraft(null);
-      setMatches({});
-      setText("");
+  async function save(event) {
+    event.preventDefault();
+    if (!payload.domains.length) {
+      setError(t("tplNeedDomains"));
       return;
     }
-    const p = found.payload;
-    setDraft({
-      name: found.name,
-      strategy: p.strategy,
-      weights: Object.fromEntries((p.proxies || []).map((w) => [w.proxy_id, { on: true, weight: w.weight }])),
+    setBusy(true);
+    try {
+      await api("/api/templates", { method: "POST", body: JSON.stringify({ name: name.trim(), payload }) });
+      toast(t("tplSaved"));
+      reload();
+      onClose();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={t("saveTemplateTitle")}
+      note={<span className="dirty">{t("domainCount", { n: payload.domains.length })}</span>}
+      footer={(
+        <>
+          <button type="button" className="btn ghost" onClick={onClose}>{t("cancel")}</button>
+          <button type="submit" form="tpl-save" className="btn" disabled={busy || !name.trim() || !payload.domains.length}>{t("save")}</button>
+        </>
+      )}
+    >
+      <form id="tpl-save" className="code-step" onSubmit={save}>
+        <Err text={error} />
+        <p className="hint">{t("saveTemplateHint")}</p>
+        <div className="f">
+          <label htmlFor="tpl-name">{t("name")}</label>
+          <input id="tpl-name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditServiceModal({ svc, nodes, onClose, reload, ask, onSaveTpl }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const [name, setName] = useState(svc.name);
+  const [comment, setComment] = useState(svc.comment || "");
+  const [strategy, setStrategy] = useState(svc.strategy || "round_robin");
+  const [enabled, setEnabled] = useState(!!svc.enabled);
+  const [weights, setWeights] = useState(() => weightsFrom(svc));
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  function setWeight(id, patch) {
+    setWeights((prev) => ({ ...prev, [id]: { on: false, weight: 1, ...prev[id], ...patch } }));
+  }
+
+  const orig = weightsFrom(svc);
+  const dirty = [
+    name !== svc.name,
+    comment !== (svc.comment || ""),
+    enabled !== !!svc.enabled,
+    strategy !== (svc.strategy || "round_robin"),
+    JSON.stringify(proxiesFrom(nodes, weights)) !== JSON.stringify(proxiesFrom(nodes, orig)),
+  ].filter(Boolean).length;
+
+  async function save(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/api/services/${svc.id}`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: name.trim(),
+          strategy,
+          comment,
+          enabled,
+          proxies: proxiesFrom(nodes, weights),
+        }),
+      });
+      toast(t("saved"));
+      reload();
+      onClose();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function remove() {
+    ask(t("confirmDelete", { name: svc.name }), async () => {
+      try {
+        await api(`/api/services/${svc.id}`, { method: "DELETE" });
+        reload();
+        onClose();
+      } catch (err) { setError(err); }
     });
-    setMatches(Object.fromEntries((p.domains || []).map((d) => [d.name, d.match])));
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={820}
+      title={t("editService")}
+      note={dirty ? <span className="dirty">{t("unsaved", { n: dirty })}</span> : null}
+      footer={(
+        <>
+          <TrashButton tip={t("trashServiceTip")} onClick={remove} />
+          <button type="button" className="btn ghost" onClick={() => onSaveTpl(svc)} disabled={!svc.members.length}>{t("saveTemplate")}</button>
+          <button type="button" className="btn ghost" onClick={onClose}>{t("cancel")}</button>
+          <button type="submit" form="svc-edit" className="btn" disabled={busy || !name.trim() || !dirty}>{t("save")}</button>
+        </>
+      )}
+    >
+      <form id="svc-edit" onSubmit={save}>
+        <Err text={error} />
+        <section className="sect">
+          <h3>{t("svcSect")}<small>{enabled ? t("enabled") : t("nodeOff")}</small></h3>
+          <div className="sbody f">
+            <div className="frow">
+              <div>
+                <label htmlFor="edit-svc-name">{t("name")}</label>
+                <input id="edit-svc-name" value={name} onChange={(e) => setName(e.target.value)} required />
+              </div>
+              <div>
+                <label htmlFor="edit-svc-comment">{t("comment")}</label>
+                <input id="edit-svc-comment" value={comment} onChange={(e) => setComment(e.target.value)} />
+              </div>
+            </div>
+            <div className="swrow">
+              <span className="t"><b>{t("enabled")}</b><span>{t("svcEnabledSub")}</span></span>
+              <Switch on={enabled} onChange={setEnabled} label={t("enabled")} />
+            </div>
+          </div>
+        </section>
+        <RouteFields idPrefix="edit-svc" nodes={nodes} weights={weights} setWeight={setWeight} strategy={strategy} setStrategy={setStrategy} />
+      </form>
+    </Modal>
+  );
+}
+
+function NewServiceModal({ nodes, templates, reload, onClose, ask }) {
+  const { t } = useI18n();
+  const [mode, setMode] = useState(templates.length ? "tpl" : "blank");
+  const [tplId, setTplId] = useState("");
+  const [name, setName] = useState("");
+  const [comment, setComment] = useState("");
+  const [strategy, setStrategy] = useState("round_robin");
+  const [enabled, setEnabled] = useState(true);
+  const [weights, setWeights] = useState({});
+  const [matches, setMatches] = useState({});
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const tpl = templates.find((x) => x.id === tplId);
+  const parsed = parseDomainsInput(text);
+  const onNodes = nodes.filter((n) => weights[n.id]?.on);
+
+  function blank() {
+    setMode("blank");
+    setTplId("");
+    setName("");
+    setComment("");
+    setStrategy("round_robin");
+    setEnabled(true);
+    setWeights({});
+    setMatches({});
+    setText("");
+    setError("");
+  }
+
+  function pick(found) {
+    const p = found.payload;
+    setMode("tpl");
+    setTplId(found.id);
+    setName(found.name);
+    setStrategy(p.strategy || "round_robin");
+    setWeights(Object.fromEntries((p.proxies || []).map((w) => [w.proxy_id, { on: true, weight: w.weight }])));
+    setMatches(Object.fromEntries((p.domains || []).map((d) => [d.name, d.match || "suffix"])));
     setText((p.domains || []).map((d) => d.name).join("\n"));
+    setError("");
+  }
+
+  function setWeight(id, patch) {
+    setWeights((prev) => ({ ...prev, [id]: { on: false, weight: 1, ...prev[id], ...patch } }));
   }
 
   async function create(event) {
     event.preventDefault();
-    const form = new FormData(event.target);
-    const parsed = parseDomainsInput(text);
     if (!parsed.ok.length) {
-      setError(new Error(t("noMembers")));
+      setError(t("noMembers"));
       return;
     }
-    const body = {
-      ...serviceBody(form, nodes),
-      members: parsed.ok.map((name) => ({ name, match: matches[name] || "suffix", enabled: true, comment: "" })),
-    };
     try {
-      await api("/api/services", { method: "POST", body: JSON.stringify(body) });
-      onDone();
+      await api("/api/services", { method: "POST", body: JSON.stringify({
+        name,
+        strategy,
+        comment,
+        enabled,
+        proxies: onNodes.map((n) => ({ proxy_id: n.id, weight: Number(weights[n.id].weight) || 1 })),
+        members: parsed.ok.map((domain) => ({ name: domain, match: matches[domain] || "suffix", enabled: true, comment: "" })),
+      }) });
+      onClose();
       reload();
     } catch (err) { setError(err); }
   }
 
   return (
-    <form className="mod new-service" key={tplId} onSubmit={create}>
-      <div className="grid">
-        <div>
-          <label>{t("fromTemplate")}</label>
-          <select value={tplId} onChange={(e) => pick(e.target.value)}>
-            <option value="">{t("blankService")}</option>
-            {templates.map((x) => <option key={x.id} value={x.id}>{templateSummary({ name: x.name, domains: x.payload.domains || [] }, t)}</option>)}
-          </select>
+    <Modal
+      open
+      onClose={onClose}
+      width={820}
+      title={t("newService")}
+      note={<span className="dirty">{tpl ? templateSummary({ name: tpl.name, domains: tpl.payload.domains || [] }, t) : t("blankService")}</span>}
+      footer={(
+        <>
+          <button type="button" className="btn ghost" onClick={onClose}>{t("cancel")}</button>
+          <button type="submit" form="svc-new" className="btn" disabled={!name.trim() || !parsed.ok.length}>{t("add")}</button>
+        </>
+      )}
+    >
+      <form id="svc-new" onSubmit={create}>
+        <div className="seg" role="tablist">
+          <button type="button" role="tab" aria-selected={mode === "tpl"} className={mode === "tpl" ? "on" : ""} onClick={() => setMode("tpl")}>{t("fromTemplate")}</button>
+          <button type="button" role="tab" aria-selected={mode === "blank"} className={mode === "blank" ? "on" : ""} onClick={blank}>{t("blankService")}</button>
         </div>
-      </div>
-      <ServiceFields service={draft ? { name: draft.name, strategy: draft.strategy, comment: "", enabled: true, proxies: Object.entries(draft.weights).map(([id, w]) => ({ proxy_id: id, ...w })) } : null} nodes={nodes} />
-      <textarea name="domains" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("pasteDomains")} aria-label={t("pasteDomains")} rows={4} />
-      {tpl && <p className="mono">{templateSummary({ name: tpl.name, domains: tpl.payload.domains || [] }, t)}</p>}
-      <p><button type="submit">{t("add")}</button></p>
-    </form>
+        {mode === "tpl" && (
+          <div className="tplgrid">
+            {templates.map((x) => (
+              <div key={x.id} className={`tplcard hasx${x.id === tplId ? " on" : ""}`}>
+                <button type="button" className="tplpick" onClick={() => pick(x)}>
+                  <b>{x.name}</b>
+                  <span>
+                    {t("domainCount", { n: (x.payload.domains || []).length })}
+                    {!isBuiltinTemplate(x.id) ? ` · ${t("tplCustom")}` : ""}
+                  </span>
+                </button>
+                {!isBuiltinTemplate(x.id) && (
+                  <button
+                    type="button"
+                    className="tplx"
+                    aria-label={t("delete")}
+                    onClick={() => ask(t("confirmDeleteTpl", { name: x.name }), async () => {
+                      try {
+                        await api(`/api/templates/${x.id}`, { method: "DELETE" });
+                        if (tplId === x.id) blank();
+                        reload();
+                      } catch (err) { setError(err); }
+                    })}
+                  >✕</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <Err text={error} />
+        <section className="sect">
+          <h3>{t("svcSect")}<small>{enabled ? t("enabled") : t("disable")}</small></h3>
+          <div className="sbody f">
+            <div className="frow">
+              <div>
+                <label htmlFor="svc-name">{t("name")}</label>
+                <input id="svc-name" value={name} onChange={(e) => setName(e.target.value)} required />
+              </div>
+              <div>
+                <label htmlFor="svc-comment">{t("comment")}</label>
+                <input id="svc-comment" value={comment} onChange={(e) => setComment(e.target.value)} />
+              </div>
+            </div>
+            <div className="swrow">
+              <span className="t"><b>{t("enabled")}</b><span>{t("svcEnabledSub")}</span></span>
+              <Switch on={enabled} onChange={setEnabled} label={t("enabled")} />
+            </div>
+          </div>
+        </section>
+        <section className="sect">
+          <h3>{t("domains")}<small>{parsed.ok.length ? t("domainCount", { n: parsed.ok.length }) : ""}</small></h3>
+          <div className="sbody f">
+            {!!parsed.ok.length && (
+              <div className="dchips">
+                {parsed.ok.map((domain) => (
+                  <button
+                    type="button"
+                    key={domain}
+                    className="dchip"
+                    onClick={() => setMatches((m) => ({ ...m, [domain]: (m[domain] || "suffix") === "suffix" ? "fqdn" : "suffix" }))}
+                  >
+                    {domain}
+                    <i>{(matches[domain] || "suffix") === "fqdn" ? t("fqdn") : t("suffix")}</i>
+                  </button>
+                ))}
+              </div>
+            )}
+            {!!parsed.bad.length && (
+              <div className="dchips">
+                {parsed.bad.map((b) => (
+                  <span key={b.raw} className="dchip bad">{b.raw}<i>{t(FQDN_REASON[b.reason] || "fqdnBadLabel")}</i></span>
+                ))}
+              </div>
+            )}
+            <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={t("pasteDomains")} aria-label={t("pasteDomains")} rows={4} />
+          </div>
+        </section>
+        <RouteFields idPrefix="new-svc" nodes={nodes} weights={weights} setWeight={setWeight} strategy={strategy} setStrategy={setStrategy} />
+      </form>
+    </Modal>
   );
 }
 
@@ -265,37 +546,61 @@ export function Services() {
   const { data, error, setError, reload } = useLoad("/api/services");
   const [open, setOpen] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [savingTpl, setSavingTpl] = useState(null);
   const [ask, confirmRow] = useConfirm();
-  if (!data) return <div className="mod"><Err text={error} />{!error && <SkeletonRows cols={4} />}</div>;
+  if (!data) {
+    return (
+      <div className="mod">
+        <Err text={error} />
+        {!error && <table><tbody><SkeletonRows cols={4} /></tbody></table>}
+      </div>
+    );
+  }
   const services = data.services || [];
   const nodes = data.proxies || [];
   const templates = data.templates || [];
   const allTemplates = [
     ...BUILTIN_TEMPLATES,
-    ...templates.map((x) => ({ id: x.id, name: x.name, payload: JSON.parse(x.payload) })),
+    ...templates.map((x) => ({ id: x.id, name: x.name, payload: readTemplatePayload(x.payload) })),
   ];
   return (
     <>
       {confirmRow}
       <Err text={error} />
       <div className="toolbar">
-        <button type="button" onClick={() => setCreating((c) => !c)}>{t("newService")}</button>
+        <button type="button" className="btn" onClick={() => setCreating(true)}>{t("newService")}</button>
       </div>
       {creating && (
-        <NewService nodes={nodes} templates={allTemplates} reload={reload} setError={setError} onDone={() => setCreating(false)} />
+        <NewServiceModal nodes={nodes} templates={allTemplates} reload={reload} onClose={() => setCreating(false)} ask={ask} />
       )}
-      {services.map((svc) => (
-        <ServiceCard
-          key={svc.id}
-          svc={svc}
+      {editing && (
+        <EditServiceModal
+          svc={editing}
           nodes={nodes}
-          open={open === svc.id}
-          onToggle={() => setOpen(open === svc.id ? null : svc.id)}
           reload={reload}
           ask={ask}
-          setError={setError}
+          onClose={() => setEditing(null)}
+          onSaveTpl={setSavingTpl}
         />
-      ))}
+      )}
+      {savingTpl && (
+        <SaveTemplateModal svc={savingTpl} reload={reload} onClose={() => setSavingTpl(null)} />
+      )}
+      <div className="svc-list">
+        {services.map((svc) => (
+          <ServiceCard
+            key={svc.id}
+            svc={svc}
+            open={open === svc.id}
+            onToggle={() => setOpen(open === svc.id ? null : svc.id)}
+            onEdit={setEditing}
+            reload={reload}
+            ask={ask}
+            setError={setError}
+          />
+        ))}
+      </div>
       {!services.length && <p className="empty">{t("noServices")}</p>}
     </>
   );

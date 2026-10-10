@@ -31,7 +31,7 @@ func ParseKey(s string) ([]byte, error) {
 	s = strings.TrimSpace(s)
 	b, err := hex.DecodeString(s)
 	if err != nil || len(b) != 32 {
-		return nil, errors.New("ключ должен быть 64 hex-символа")
+		return nil, errors.New("key must be 64 hex characters")
 	}
 	return b, nil
 }
@@ -87,11 +87,11 @@ func certificate(priv *ecdsa.PrivateKey, cn string, usage x509.ExtKeyUsage) (tls
 func pin(want *ecdsa.PublicKey) func(tls.ConnectionState) error {
 	return func(cs tls.ConnectionState) error {
 		if len(cs.PeerCertificates) == 0 {
-			return errors.New("нет сертификата")
+			return errors.New("no certificate")
 		}
 		got, ok := cs.PeerCertificates[0].PublicKey.(*ecdsa.PublicKey)
 		if !ok || !got.Equal(want) {
-			return errors.New("ключ не совпал")
+			return errors.New("The key does not match.")
 		}
 		return nil
 	}

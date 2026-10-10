@@ -23,7 +23,8 @@ const (
 	recoveryCodesN   = 8
 )
 
-// RecoveryCode is one backup code the account page can show. Code is empty once it is used.
+// RecoveryCode is one backup-code slot. Code is filled only by EnableTOTP's one-time return.
+// The account list leaves Code empty: the plaintext is shown once and is not read back.
 type RecoveryCode struct {
 	ID   string `json:"id"`
 	Code string `json:"code,omitempty"`
@@ -182,14 +183,15 @@ func (s *Store) TOTPEnabled(ctx context.Context, userID string) (bool, error) {
 	return enabled, mapErr(err)
 }
 
-// RecoveryCodes decrypts the account's backup codes. A used code comes back without its text.
+// RecoveryCodes lists backup-code slots without the secret text.
+// EnableTOTP is the only call that returns the plaintext, and it does that once.
 func (s *Store) RecoveryCodes(ctx context.Context, userID string) (bool, []RecoveryCode, error) {
 	enabled, err := s.TOTPEnabled(ctx, userID)
 	if err != nil {
 		return false, nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, code_nonce, code_ciphertext, used_at IS NOT NULL
+		SELECT id::text, used_at IS NOT NULL
 		FROM recovery_code WHERE user_id = $1 ORDER BY ordinal
 	`, userID)
 	if err != nil {
@@ -199,16 +201,8 @@ func (s *Store) RecoveryCodes(ctx context.Context, userID string) (bool, []Recov
 	out := []RecoveryCode{}
 	for rows.Next() {
 		var rc RecoveryCode
-		var nonce, ct []byte
-		if err := rows.Scan(&rc.ID, &nonce, &ct, &rc.Used); err != nil {
+		if err := rows.Scan(&rc.ID, &rc.Used); err != nil {
 			return false, nil, err
-		}
-		if !rc.Used {
-			plain, err := s.open(nonce, ct)
-			if err != nil {
-				return false, nil, err
-			}
-			rc.Code = string(plain)
 		}
 		out = append(out, rc)
 	}

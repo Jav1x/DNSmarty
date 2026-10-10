@@ -31,6 +31,7 @@ type Member struct {
 	Enabled    bool   `json:"enabled"`
 	Comment    string `json:"comment"`
 	Queries24  int64  `json:"queries_24h"`
+	Blocked24  int64  `json:"blocked_24h"`
 	Sessions24 int64  `json:"sessions_24h"`
 	Bytes24    int64  `json:"bytes_24h"`
 }
@@ -44,6 +45,7 @@ type Service struct {
 	Members    []Member       `json:"members"`
 	Proxies    []ServiceProxy `json:"proxies"`
 	Queries24  int64          `json:"queries_24h"`
+	Blocked24  int64          `json:"blocked_24h"`
 	Sessions24 int64          `json:"sessions_24h"`
 	Bytes24    int64          `json:"bytes_24h"`
 }
@@ -63,19 +65,20 @@ type MemberInput struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// Трафик за 24 ч: DNS-запросы сворачиваются до уникальных qname, затем каждое имя
-// разворачивается в свои суффиксы и соединяется с domain.name по равенству (R8).
 const memberDNS24 = `
 WITH q AS (
-    SELECT rtrim(qname, '.') AS qname, count(*) AS n FROM dns_hit
+    SELECT rtrim(qname, '.') AS qname,
+           count(*) AS n,
+           count(*) FILTER (WHERE decision = 'acl') AS acl
+    FROM dns_hit
     WHERE at > now() - interval '24 hours' GROUP BY 1
 ), sfx AS (
-    SELECT q.qname, q.n, array_to_string(p.parts[i:cardinality(p.parts)], '.') AS suffix
+    SELECT q.qname, q.n, q.acl, array_to_string(p.parts[i:cardinality(p.parts)], '.') AS suffix
     FROM q
     CROSS JOIN LATERAL (SELECT string_to_array(q.qname, '.') AS parts) p
     CROSS JOIN LATERAL generate_series(1, cardinality(p.parts)) AS i
 )
-SELECT d.id::text, coalesce(sum(sfx.n), 0)::bigint
+SELECT d.id::text, coalesce(sum(sfx.n), 0)::bigint, coalesce(sum(sfx.acl), 0)::bigint
 FROM domain d
 LEFT JOIN sfx ON sfx.suffix = d.name AND (d.match_kind = 'suffix' OR sfx.qname = d.name)
 GROUP BY d.id`
@@ -152,9 +155,10 @@ func (s *Store) ListServices(ctx context.Context) ([]Service, error) {
 		return nil, err
 	}
 
-	if err := s.fillMemberTraffic(ctx, memberDNS24, func(id string, a, _ int64) {
+	if err := s.fillMemberTraffic(ctx, memberDNS24, func(id string, a, b int64) {
 		if at, ok := memberIdx[id]; ok {
 			services[at[0]].Members[at[1]].Queries24 = a
+			services[at[0]].Members[at[1]].Blocked24 = b
 		}
 	}); err != nil {
 		return nil, err
@@ -202,6 +206,7 @@ func (s *Store) ListServices(ctx context.Context) ([]Service, error) {
 		}
 		for _, m := range sv.Members {
 			sv.Queries24 += m.Queries24
+			sv.Blocked24 += m.Blocked24
 			sv.Sessions24 += m.Sessions24
 			sv.Bytes24 += m.Bytes24
 		}
@@ -218,11 +223,7 @@ func (s *Store) fillMemberTraffic(ctx context.Context, sql string, set func(id s
 	for rows.Next() {
 		var id string
 		var a, b int64
-		if sql == memberDNS24 {
-			if err := rows.Scan(&id, &a); err != nil {
-				return err
-			}
-		} else if err := rows.Scan(&id, &a, &b); err != nil {
+		if err := rows.Scan(&id, &a, &b); err != nil {
 			return err
 		}
 		set(id, a, b)
@@ -235,7 +236,7 @@ func (s *Store) CreateService(ctx context.Context, actor string, in ServiceInput
 		return "", err
 	}
 	if len(members) == 0 {
-		return "", fmt.Errorf("%w: сервис без доменов", ErrInvalid)
+		return "", fmt.Errorf("%w: service has no domains", ErrInvalid)
 	}
 	for i := range members {
 		if err := normalizeMember(&members[i]); err != nil {
@@ -389,23 +390,23 @@ func replaceServiceProxies(ctx context.Context, tx pgx.Tx, serviceID string, pro
 func normalizeService(in *ServiceInput) error {
 	in.Name = strings.TrimSpace(in.Name)
 	if len(in.Name) < 1 || len(in.Name) > 64 {
-		return fmt.Errorf("%w: имя сервиса", ErrInvalid)
+		return fmt.Errorf("%w: service name", ErrInvalid)
 	}
 	switch in.Strategy {
 	case snapshot.BalanceRoundRobin, snapshot.BalanceWeighted, snapshot.BalanceSticky:
 	default:
-		return fmt.Errorf("%w: стратегия", ErrInvalid)
+		return fmt.Errorf("%w: strategy", ErrInvalid)
 	}
 	in.Comment = strings.TrimSpace(in.Comment)
 	if len(in.Comment) > 200 {
-		return fmt.Errorf("%w: комментарий", ErrInvalid)
+		return fmt.Errorf("%w: comment", ErrInvalid)
 	}
 	for _, p := range in.Proxies {
 		if !uuidRe.MatchString(p.ProxyID) {
-			return fmt.Errorf("%w: прокси", ErrInvalid)
+			return fmt.Errorf("%w: proxy", ErrInvalid)
 		}
 		if p.Weight < 1 || p.Weight > 1000 {
-			return fmt.Errorf("%w: вес", ErrInvalid)
+			return fmt.Errorf("%w: weight", ErrInvalid)
 		}
 	}
 	return nil
@@ -415,16 +416,16 @@ func normalizeMember(m *MemberInput) error {
 	m.Name = strings.ToLower(strings.TrimSpace(m.Name))
 	m.Name = strings.TrimSuffix(m.Name, ".")
 	if len(m.Name) == 0 || len(m.Name) > 253 || !domainName.MatchString(m.Name) {
-		return fmt.Errorf("%w: имя домена", ErrInvalid)
+		return fmt.Errorf("%w: domain name", ErrInvalid)
 	}
 	switch m.Match {
 	case snapshot.MatchSuffix, snapshot.MatchFQDN:
 	default:
-		return fmt.Errorf("%w: тип совпадения", ErrInvalid)
+		return fmt.Errorf("%w: match type", ErrInvalid)
 	}
 	m.Comment = strings.TrimSpace(m.Comment)
 	if len(m.Comment) > 200 {
-		return fmt.Errorf("%w: комментарий", ErrInvalid)
+		return fmt.Errorf("%w: comment", ErrInvalid)
 	}
 	return nil
 }
@@ -435,7 +436,7 @@ func requireProxy(ctx context.Context, tx pgx.Tx, nodeID string) error {
 		return mapErr(err)
 	}
 	if role != snapshot.RoleProxy {
-		return fmt.Errorf("%w: вес только у прокси", ErrInvalid)
+		return fmt.Errorf("%w: weight is only for a proxy", ErrInvalid)
 	}
 	return nil
 }
@@ -478,7 +479,7 @@ func (s *Store) CreateTemplate(ctx context.Context, actor, name string, p Templa
 	}
 	name = strings.TrimSpace(name)
 	if len(p.Domains) == 0 {
-		return "", fmt.Errorf("%w: шаблон без доменов", ErrInvalid)
+		return "", fmt.Errorf("%w: template has no domains", ErrInvalid)
 	}
 	for i := range p.Domains {
 		if err := normalizeMember(&p.Domains[i]); err != nil {

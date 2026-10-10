@@ -4,16 +4,6 @@ import { act } from "react";
 import { MemoryRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ROUTES } from "./routes.js";
 
-/* Требуется DOM-окружение: vitest запускается с environment jsdom/happy-dom
-   (см. vitest config). */
-
-/* Роутинг проверяем по-настоящему: зеркальная копия <Routes> из App.jsx
-   (литеральные пути страниц + ROUTES из routes.js) прогоняется через
-   настоящий MemoryRouter. Шпион-элемент пишет тег в журнал — какой тег
-   смонтирован последним, тот route и отрендерился; редиректы resolve'ятся
-   самим роутером. Удаление маршрута из App.jsx без зеркального удаления
-   здесь ловится review-диффом; удаление с поломкой пути — тестом ниже. */
-
 let spyLog = [];
 
 function Spy({ tag }) {
@@ -26,19 +16,15 @@ function Current({ path }) {
   return null;
 }
 
-/* Повторяет структуру <Routes> в App.jsx (пути — из того же источника:
-   литералы страниц + ROUTES из routes.js). Правки App.jsx дублируются
-   здесь (review-дифф ловит расхождение); раскладка — плоским массивом:
-   Routes принимает только Route как прямые дети. */
 const appRoutes = [
   <Route key="login" path="/login" element={<Spy tag="login" />} />,
   <Route key="overview" path="/" element={<Spy tag="overview" />} />,
   <Route key="nodes" path="/nodes" element={<Spy tag="nodes" />} />,
-  /* Спец §4: «Доступ» — прежняя страница Клиентов. */
+
   <Route key="access" path={ROUTES.access} element={<Spy tag="access" />} />,
   <Route key="services" path={ROUTES.services} element={<Spy tag="services" />} />,
   <Route key="domains" path="/domains" element={<Navigate to={ROUTES.redirect.domains} replace />} />,
-  /* Старая закладка /clients не отдаёт 404 (ROUTES.redirect). */
+
   <Route key="clients" path="/clients" element={<Navigate to={ROUTES.redirect.clients} replace />} />,
   <Route key="logs" path="/logs" element={<Spy tag="logs" />} />,
   <Route key="stats" path="/stats" element={<Spy tag="stats" />} />,
@@ -47,8 +33,6 @@ const appRoutes = [
   <Route key="audit" path="/audit" element={<Spy tag="audit" />} />,
 ];
 
-/* Прогоняет entryPath через MemoryRouter с таблицей App. Возвращает
-   last-spy-tag (какой элемент смонтирован в конце навигации). */
 function renderRoutesAt(entryPath) {
   spyLog = [];
   const div = document.createElement("div");
@@ -95,7 +79,6 @@ describe("Route table of App.jsx (real MemoryRouter run)", () => {
   });
 });
 
-/* ── ROUTES-объект: контракт для Shell (пути навигации) ──────────────────── */
 describe("ROUTES (spec §4 IA)", () => {
   it("defines the new IA paths", () => {
     expect(ROUTES.access).toBe("/access");

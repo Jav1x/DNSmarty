@@ -56,7 +56,7 @@ func (s *Server) totpDisable(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.store.DisableTOTP(r.Context(), sess.Username, sess.UserID, body.Password)
 	if errors.Is(err, store.ErrWrongPassword) {
-		writeErr(w, http.StatusBadRequest, "wrong_password", "Текущий пароль неверен.")
+		writeErr(w, http.StatusBadRequest, "wrong_password", "The current password is wrong.")
 		return
 	}
 	if err != nil {
@@ -87,7 +87,7 @@ func (s *Server) totpCodeUse(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) loginTOTP(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
-		writeErr(w, http.StatusForbidden, "csrf", "Запрос отклонён: обновите страницу.")
+		writeErr(w, http.StatusForbidden, "csrf", "Request rejected: reload the page.")
 		return
 	}
 	var body struct {
@@ -100,21 +100,21 @@ func (s *Server) loginTOTP(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r).String()
 	if wait := s.limiter.blocked(ip, "totp"); wait > 0 {
 		w.Header().Set("Retry-After", retryAfter(wait))
-		writeErr(w, http.StatusTooManyRequests, "rate_limited", "Слишком много попыток. Попробуйте позже.")
+		writeErr(w, http.StatusTooManyRequests, "rate_limited", "Too many attempts. Try again later.")
 		return
 	}
 	userID, username, err := s.store.RedeemLoginTicket(r.Context(), body.Ticket, body.Code, time.Now())
 	if err != nil {
 		s.limiter.fail(ip, "totp")
 		s.audit(r, "totp", "login.fail", map[string]string{"ip": ip, "reason": "totp"})
-		writeErr(w, http.StatusUnauthorized, "bad_code", "Неверный код.")
+		writeErr(w, http.StatusUnauthorized, "bad_code", "Wrong code.")
 		return
 	}
 	s.limiter.success(ip)
 	cookie, csrf, err := s.store.CreateSession(r.Context(), userID, ip, r.UserAgent())
 	if err != nil {
 		s.log.Error("session", "err", err)
-		writeErr(w, http.StatusInternalServerError, "internal", "Сессия не создана.")
+		writeErr(w, http.StatusInternalServerError, "internal", "Session was not created.")
 		return
 	}
 	s.audit(r, username, "login", map[string]string{"ip": ip})

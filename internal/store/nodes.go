@@ -23,6 +23,7 @@ type Node struct {
 	PublicIPv6    string          `json:"public_ipv6"`
 	Region        string          `json:"region"`
 	Enabled       bool            `json:"enabled"`
+	Ordinal       int             `json:"ordinal"`
 	ConfigVersion int64           `json:"config_version"`
 	LastSeen      *time.Time      `json:"last_seen_at"`
 	AgentHost     string          `json:"agent_host"`
@@ -31,7 +32,10 @@ type Node struct {
 	AgentVersion  string          `json:"agent_version"`
 	LastHW        json.RawMessage `json:"last_hw"`
 	// Fresh: enabled and heard from within the live window.
-	Fresh bool `json:"fresh"`
+	Fresh      bool  `json:"fresh"`
+	Queries24  int64 `json:"queries_24h"`
+	Sessions24 int64 `json:"sessions_24h"`
+	Bytes24    int64 `json:"bytes_24h"`
 }
 
 // liveWindow is how long a node counts as alive after the last successful push:
@@ -66,10 +70,10 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, role, name,
 		       coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
-		       region, enabled, config_version, last_seen_at,
+		       region, enabled, ordinal, config_version, last_seen_at,
 		       agent_host, agent_port, last_error, agent_version, coalesce(last_hw::text, 'null'), `+nodeFresh+`
 		FROM node
-		ORDER BY role, name
+		ORDER BY ordinal, role, name
 	`)
 	if err != nil {
 		return nil, err
@@ -79,7 +83,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 	for rows.Next() {
 		var n Node
 		var hw string
-		if err := rows.Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion, &hw, &n.Fresh); err != nil {
+		if err := rows.Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.Ordinal, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion, &hw, &n.Fresh); err != nil {
 			return nil, err
 		}
 		n.LastHW = json.RawMessage(hw)
@@ -104,13 +108,17 @@ func (s *Store) CreateNode(ctx context.Context, actor string, in NodeInput) (key
 		return "", Node{}, err
 	}
 	err = s.tx(ctx, func(tx pgx.Tx) error {
+		var ord int
+		if err := tx.QueryRow(ctx, `SELECT coalesce(max(ordinal), 0) + 1 FROM node`).Scan(&ord); err != nil {
+			return err
+		}
 		err := tx.QueryRow(ctx, `
-			INSERT INTO node (role, name, public_ipv4, public_ipv6, region, enabled, agent_host, agent_port, key_nonce, key_ciphertext)
-			VALUES ($1, $2, $3::inet, $4::inet, $5, $6, $7, $8, $9, $10)
+			INSERT INTO node (role, name, public_ipv4, public_ipv6, region, enabled, ordinal, agent_host, agent_port, key_nonce, key_ciphertext)
+			VALUES ($1, $2, $3::inet, $4::inet, $5, $6, $7, $8, $9, $10, $11)
 			RETURNING id::text, role, name, coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
-			          region, enabled, config_version, last_seen_at, agent_host, agent_port, last_error, agent_version
-		`, in.Role, in.Name, inetOrNil(in.IPv4), inetOrNil(in.IPv6), in.Region, in.Enabled, in.AgentHost, in.AgentPort, nonce, ct).Scan(
-			&node.ID, &node.Role, &node.Name, &node.PublicIPv4, &node.PublicIPv6, &node.Region, &node.Enabled, &node.ConfigVersion, &node.LastSeen, &node.AgentHost, &node.AgentPort, &node.LastError, &node.AgentVersion,
+			          region, enabled, ordinal, config_version, last_seen_at, agent_host, agent_port, last_error, agent_version
+		`, in.Role, in.Name, inetOrNil(in.IPv4), inetOrNil(in.IPv6), in.Region, in.Enabled, ord, in.AgentHost, in.AgentPort, nonce, ct).Scan(
+			&node.ID, &node.Role, &node.Name, &node.PublicIPv4, &node.PublicIPv6, &node.Region, &node.Enabled, &node.Ordinal, &node.ConfigVersion, &node.LastSeen, &node.AgentHost, &node.AgentPort, &node.LastError, &node.AgentVersion,
 		)
 		if err != nil {
 			return mapErr(err)
@@ -193,7 +201,7 @@ func (s *Store) NodeKey(ctx context.Context, id string) ([]byte, error) {
 		return nil, mapErr(err)
 	}
 	if len(nonce) == 0 || len(ct) == 0 {
-		return nil, fmt.Errorf("%w: ключ", ErrNotFound)
+		return nil, fmt.Errorf("%w: key", ErrNotFound)
 	}
 	return s.open(nonce, ct)
 }
@@ -235,6 +243,46 @@ func (s *Store) SetUnreachable(ctx context.Context, id, msg string) error {
 	return nil
 }
 
+// ReorderNodes writes the rotation order: ids must be a permutation of every node.
+func (s *Store) ReorderNodes(ctx context.Context, actor string, ids []string) error {
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, err := parseUUID(id); err != nil {
+			return fmt.Errorf("%w: order", ErrInvalid)
+		}
+		if _, dup := seen[id]; dup {
+			return fmt.Errorf("%w: order", ErrInvalid)
+		}
+		seen[id] = struct{}{}
+	}
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		var n int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM node`).Scan(&n); err != nil {
+			return err
+		}
+		if n != len(ids) {
+			return fmt.Errorf("%w: order", ErrInvalid)
+		}
+		if n == 0 {
+			return nil
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE node AS n
+			SET ordinal = v.ord
+			FROM unnest($1::text[]) WITH ORDINALITY AS v(id, ord)
+			WHERE n.id::text = v.id
+		`, ids)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != int64(n) {
+			return fmt.Errorf("%w: order", ErrInvalid)
+		}
+		raw, _ := json.Marshal(map[string]any{"ids": ids})
+		return auditTx(ctx, tx, actor, "node.reorder", raw)
+	})
+}
+
 func (s *Store) DeleteNode(ctx context.Context, actor, id string) error {
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		var name string
@@ -254,12 +302,12 @@ func normalizeNode(in *NodeInput) error {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Region = strings.TrimSpace(in.Region)
 	if len(in.Name) < 1 || len(in.Name) > 64 {
-		return fmt.Errorf("%w: имя узла", ErrInvalid)
+		return fmt.Errorf("%w: node name", ErrInvalid)
 	}
 	switch in.Role {
 	case snapshot.RoleDNS, snapshot.RoleProxy:
 	default:
-		return fmt.Errorf("%w: роль", ErrInvalid)
+		return fmt.Errorf("%w: role", ErrInvalid)
 	}
 	if err := optionalIP(&in.IPv4); err != nil {
 		return fmt.Errorf("%w: IPv4", ErrInvalid)
@@ -268,14 +316,14 @@ func normalizeNode(in *NodeInput) error {
 		return fmt.Errorf("%w: IPv6", ErrInvalid)
 	}
 	if len(in.Region) > 64 {
-		return fmt.Errorf("%w: регион", ErrInvalid)
+		return fmt.Errorf("%w: region", ErrInvalid)
 	}
 	in.AgentHost = strings.TrimSpace(in.AgentHost)
 	if in.AgentHost == "" || len(in.AgentHost) > 253 || strings.ContainsAny(in.AgentHost, " /\\") {
-		return fmt.Errorf("%w: адрес агента", ErrInvalid)
+		return fmt.Errorf("%w: agent address", ErrInvalid)
 	}
 	if in.AgentPort < 1 || in.AgentPort > 65535 {
-		return fmt.Errorf("%w: порт агента", ErrInvalid)
+		return fmt.Errorf("%w: agent port", ErrInvalid)
 	}
 	return nil
 }
@@ -285,10 +333,10 @@ func (s *Store) GetNode(ctx context.Context, id string) (Node, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT id::text, role, name,
 		       coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
-		       region, enabled, config_version, last_seen_at,
+		       region, enabled, ordinal, config_version, last_seen_at,
 		       agent_host, agent_port, last_error, agent_version, `+nodeFresh+`
 		FROM node WHERE id = $1
-	`, id).Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion, &n.Fresh)
+	`, id).Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.Ordinal, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion, &n.Fresh)
 	if err != nil {
 		return Node{}, mapErr(err)
 	}

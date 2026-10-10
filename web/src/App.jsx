@@ -33,11 +33,9 @@ export function App() {
           <Route element={user ? <Shell user={user} onOut={() => setUser(null)} /> : <Navigate to="/login" />}>
             <Route path="/" element={<Overview />} />
             <Route path="/nodes" element={<Nodes />} />
-            {/* Спец §4: «Доступ» — это прежняя страница Клиентов (визуально переписывается в задаче 5). */}
             <Route path={ROUTES.access} element={<Access />} />
             <Route path={ROUTES.services} element={<Services />} />
             <Route path="/domains" element={<Navigate to={ROUTES.redirect.domains} replace />} />
-            {/* Старые закладки не должны отдавать 404 (ROUTES.redirect). */}
             <Route path="/clients" element={<Navigate to={ROUTES.redirect.clients} replace />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/stats" element={<Stats />} />

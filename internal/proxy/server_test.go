@@ -59,15 +59,15 @@ func TestACLRefusesBeforeRead(t *testing.T) {
 	}
 	defer conn.Close()
 	if !closedByPeer(t, conn) {
-		t.Fatal("клиент из blacklist не отключён")
+		t.Fatal("blacklist client was not dropped")
 	}
 	select {
 	case r := <-s.Reports():
 		if r.Status != "acl" {
-			t.Fatalf("отчёт: %+v", r)
+			t.Fatalf("report: %+v", r)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("нет отчёта")
+		t.Fatal("no report")
 	}
 }
 
@@ -87,7 +87,7 @@ func TestGlobalConnCap(t *testing.T) {
 	}
 	defer second.Close()
 	if !closedByPeer(t, second) {
-		t.Fatal("сверх лимита соединение принято")
+		t.Fatal("over-limit connection accepted")
 	}
 }
 
@@ -120,10 +120,10 @@ func TestHTTPHostPerRequest(t *testing.T) {
 		return resp.StatusCode
 	}
 	if code := send("allowed.test"); code != http.StatusBadGateway {
-		t.Fatalf("разрешённое имя: %d", code)
+		t.Fatalf("allowed name: %d", code)
 	}
 	if code := send("other.test"); code != http.StatusForbidden {
-		t.Fatalf("чужой Host на том же соединении: %d", code)
+		t.Fatalf("foreign Host on the same connection: %d", code)
 	}
 }
 
@@ -158,11 +158,11 @@ func TestHTTPDropsForwardedHeaders(t *testing.T) {
 		t.Fatalf("status %d", rec.code)
 	}
 	if got == nil {
-		t.Fatal("запрос не дошёл до origin")
+		t.Fatal("request did not reach origin")
 	}
 	for _, h := range []string{"X-Forwarded-For", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto"} {
 		if v := got.Get(h); v != "" {
-			t.Fatalf("%s ушёл на origin: %q", h, v)
+			t.Fatalf("%s reached origin: %q", h, v)
 		}
 	}
 }
@@ -191,7 +191,7 @@ func TestSpliceOneWayStream(t *testing.T) {
 	start := time.Now()
 	for time.Since(start) < 4*idle {
 		if _, err := originSide.Write([]byte("x")); err != nil {
-			t.Fatalf("поток оборвался через %v: %v", time.Since(start), err)
+			t.Fatalf("stream broke after %v: %v", time.Since(start), err)
 		}
 		time.Sleep(idle / 4)
 	}
@@ -199,10 +199,10 @@ func TestSpliceOneWayStream(t *testing.T) {
 	select {
 	case down := <-done:
 		if down == 0 {
-			t.Fatal("байты не посчитаны")
+			t.Fatal("bytes not counted")
 		}
 	case <-time.After(5 * idle):
-		t.Fatal("тихая сессия не закрылась")
+		t.Fatal("idle session did not close")
 	}
 }
 
@@ -253,13 +253,13 @@ func TestResolveCached(t *testing.T) {
 	}
 	// A name that does not resolve is cached negative: the repeat must not call the upstream again.
 	if _, err := s.resolveCached("none.test.", []string{ln.Addr().String()}); err == nil {
-		t.Fatal("negative resolve вернул успех")
+		t.Fatal("negative resolve returned success")
 	}
 	afterMiss := atomic.LoadInt64(&n)
 	if _, err := s.resolveCached("none.test.", []string{ln.Addr().String()}); err == nil {
-		t.Fatal("повторный negative resolve вернул успех")
+		t.Fatal("cached negative resolve returned success")
 	}
 	if atomic.LoadInt64(&n) != afterMiss {
-		t.Fatalf("negative не закэширован: %d vs %d", n, afterMiss)
+		t.Fatalf("negative not cached: %d vs %d", n, afterMiss)
 	}
 }

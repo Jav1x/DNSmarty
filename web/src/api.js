@@ -33,10 +33,10 @@ export async function api(path, options = {}) {
     }
   }
   if (response.status === 401) {
-    throw new ApiError(data?.error || "нужен вход", 401, data?.code || "unauthorized", data);
+    throw new ApiError(data?.error || "Sign in required.", 401, data?.code || "unauthorized", data);
   }
   if (!response.ok) {
-    throw new ApiError(data?.error || "ошибка запроса", response.status, data?.code || "unknown", data);
+    throw new ApiError(data?.error || "request failed", response.status, data?.code || "unknown", data);
   }
   return data;
 }

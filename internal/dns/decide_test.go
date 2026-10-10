@@ -35,14 +35,14 @@ func TestDecideRefusedAndLocal(t *testing.T) {
 	}
 	again := c.Decide(netip.MustParseAddr("198.51.100.8"), "www.example.com.", mdns.TypeA, nil)
 	if again.Action != ActionLocal || !again.IPs[0].Equal(home.IPs[0]) {
-		t.Fatal("sticky изменился")
+		t.Fatal("sticky changed")
 	}
 	dead, err := Compile(&snapshot.DNS{Domains: []snapshot.Domain{{Name: "example.com", Match: snapshot.MatchSuffix}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if d := dead.Decide(netip.MustParseAddr("198.51.100.8"), "example.com.", mdns.TypeA, nil); d.Action != ActionLocal || len(d.IPs) != 0 {
-		t.Fatalf("домен без живых прокси не должен уходить на upstream: %+v", d)
+		t.Fatalf("domain with no live proxies must not go to upstream: %+v", d)
 	}
 	if d := c.Decide(netip.MustParseAddr("198.51.100.8"), "other.test.", mdns.TypeA, nil); d.Action != ActionForward {
 		t.Fatalf("miss: %+v", d)
@@ -61,11 +61,11 @@ func TestDecideTwoA(t *testing.T) {
 		t.Fatal(err)
 	}
 	if d := c.Decide(netip.MustParseAddr("10.1.2.3"), "example.com.", mdns.TypeA, &Picker{}); len(d.IPs) != 2 {
-		t.Fatalf("ждали два A: %+v", d.IPs)
+		t.Fatalf("wanted two A: %+v", d.IPs)
 	}
 	snap.Domains[0].Balance = snapshot.BalanceSticky
 	if d := c.Decide(netip.MustParseAddr("10.1.2.3"), "example.com.", mdns.TypeA, nil); len(d.IPs) != 1 {
-		t.Fatalf("sticky ждали один A: %+v", d.IPs)
+		t.Fatalf("sticky wanted one A: %+v", d.IPs)
 	}
 }
 
@@ -82,7 +82,7 @@ func TestFQDNBeforePrefix(t *testing.T) {
 	}
 	d := c.Decide(netip.MustParseAddr("127.0.0.1"), "x.a.example.com.", mdns.TypeA, nil)
 	if len(d.IPs) != 1 || d.IPs[0].String() != "198.51.100.2" {
-		t.Fatalf("FQDN не приоритетней: %+v", d)
+		t.Fatalf("FQDN did not win: %+v", d)
 	}
 }
 
@@ -99,7 +99,7 @@ func TestLongestSuffix(t *testing.T) {
 	}
 	d := c.Decide(netip.MustParseAddr("127.0.0.1"), "x.a.example.com.", mdns.TypeA, nil)
 	if len(d.IPs) != 1 || d.IPs[0].String() != "198.51.100.2" {
-		t.Fatalf("длинный суффикс не выиграл: %+v", d)
+		t.Fatalf("longer suffix did not win: %+v", d)
 	}
 }
 
@@ -128,7 +128,7 @@ func TestACLOpenAndDenyLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Decide(netip.MustParseAddr("8.8.8.8"), "example.com.", mdns.TypeA, nil).Action != ActionForward {
-		t.Fatal("открытый отказал")
+		t.Fatal("open resolver refused")
 	}
 	denied := &snapshot.DNS{Deny: []string{"203.0.113.0/24"}, Domains: []snapshot.Domain{}}
 	c, err = Compile(denied)
@@ -136,10 +136,10 @@ func TestACLOpenAndDenyLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Decide(netip.MustParseAddr("203.0.113.5"), "example.com.", mdns.TypeA, nil).Action != ActionRefuse {
-		t.Fatal("blacklist не сработал")
+		t.Fatal("blacklist did not match")
 	}
 	if c.Decide(netip.MustParseAddr("198.51.100.9"), "example.com.", mdns.TypeA, nil).Action != ActionForward {
-		t.Fatal("не в blacklist")
+		t.Fatal("not in blacklist")
 	}
 	listed := &snapshot.DNS{Allow: []string{"198.51.100.0/24"}, Deny: []string{"198.51.100.9/32"}, Domains: []snapshot.Domain{}}
 	c, err = Compile(listed)
@@ -147,13 +147,13 @@ func TestACLOpenAndDenyLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Decide(netip.MustParseAddr("192.0.2.1"), "example.com.", mdns.TypeA, nil).Action != ActionRefuse {
-		t.Fatal("вне whitelist")
+		t.Fatal("outside whitelist")
 	}
 	if c.Decide(netip.MustParseAddr("198.51.100.9"), "example.com.", mdns.TypeA, nil).Action != ActionRefuse {
-		t.Fatal("blacklist не перекрыл whitelist")
+		t.Fatal("blacklist did not override whitelist")
 	}
 	if c.Decide(netip.MustParseAddr("198.51.100.8"), "example.com.", mdns.TypeA, nil).Action != ActionForward {
-		t.Fatal("whitelist отказал")
+		t.Fatal("whitelist refused")
 	}
 	boot := &snapshot.DNS{Bootstrap: []string{"203.0.113.5/32"}, Deny: []string{"203.0.113.0/24"}, Domains: []snapshot.Domain{}}
 	c, err = Compile(boot)
@@ -161,12 +161,12 @@ func TestACLOpenAndDenyLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Decide(netip.MustParseAddr("203.0.113.5"), "example.com.", mdns.TypeA, nil).Action != ActionForward {
-		t.Fatal("bootstrap отменился deny")
+		t.Fatal("bootstrap lost to deny")
 	}
 }
 
 func TestCompileBadCIDR(t *testing.T) {
 	if _, err := Compile(&snapshot.DNS{Allow: []string{"not-a-cidr"}}); err == nil {
-		t.Fatal("битный CIDR скомпилировался")
+		t.Fatal("malformed CIDR compiled")
 	}
 }

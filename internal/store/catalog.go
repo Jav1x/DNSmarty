@@ -90,7 +90,7 @@ func (s *Store) CreateClient(ctx context.Context, actor string, cidr, label, kin
 	}
 	label = strings.TrimSpace(label)
 	if len(label) > 80 {
-		return fmt.Errorf("%w: подпись", ErrInvalid)
+		return fmt.Errorf("%w: label", ErrInvalid)
 	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		var id string
@@ -116,7 +116,7 @@ func (s *Store) UpdateClient(ctx context.Context, actor, id, cidr, label, kind s
 	}
 	label = strings.TrimSpace(label)
 	if len(label) > 80 {
-		return fmt.Errorf("%w: подпись", ErrInvalid)
+		return fmt.Errorf("%w: label", ErrInvalid)
 	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE client_cidr SET cidr = $2::inet, label = $3, list_kind = $4, enabled = $5 WHERE id = $1`, id, norm, label, kind, enabled)
@@ -251,7 +251,7 @@ func normalizeListKind(kind string) (string, error) {
 		kind = "allow"
 	}
 	if kind != "allow" && kind != "deny" {
-		return "", fmt.Errorf("%w: список", ErrInvalid)
+		return "", fmt.Errorf("%w: list", ErrInvalid)
 	}
 	return kind, nil
 }
@@ -264,7 +264,7 @@ func normalizeCIDR(raw string) (string, error) {
 	return n.String(), nil
 }
 
-var errUpstreamForm = fmt.Errorf("%w: upstream: IP, host:853 (DoT) или https://… (DoH)", ErrInvalid)
+var errUpstreamForm = fmt.Errorf("%w: upstream: IP, host:853 (DoT) or https://… (DoH)", ErrInvalid)
 
 func NormalizeUpstream(addr string) (string, error) {
 	addr = strings.TrimSpace(addr)
@@ -293,7 +293,7 @@ func NormalizeUpstream(addr string) (string, error) {
 	}
 	pn, err := strconv.Atoi(port)
 	if err != nil || pn < 1 || pn > 65535 {
-		return "", fmt.Errorf("%w: порт upstream", ErrInvalid)
+		return "", fmt.Errorf("%w: upstream port", ErrInvalid)
 	}
 	if tlsScheme || pn == 853 {
 		if ip != nil {
@@ -316,32 +316,32 @@ func normalizeSettings(st *Settings) (string, error) {
 		return "", fmt.Errorf("%w: TTL 1–300", ErrInvalid)
 	}
 	if st.PullIntervalSec < 2 || st.PullIntervalSec > 15 {
-		return "", fmt.Errorf("%w: интервал pull 2–15 с", ErrInvalid)
+		return "", fmt.Errorf("%w: push interval 2–15 s", ErrInvalid)
 	}
 	if st.RetentionDays < 1 || st.RetentionDays > 30 {
 		return "", fmt.Errorf("%w: retention 1–30", ErrInvalid)
 	}
 	if st.SessionLimit < 1 || st.SessionLimit > 10000 {
-		return "", fmt.Errorf("%w: лимит сессий", ErrInvalid)
+		return "", fmt.Errorf("%w: session limit", ErrInvalid)
 	}
 	if st.DialTimeoutMs < 100 || st.DialTimeoutMs > 60000 {
-		return "", fmt.Errorf("%w: таймаут dial", ErrInvalid)
+		return "", fmt.Errorf("%w: dial timeout", ErrInvalid)
 	}
 	if st.IdleTimeoutMs < 1000 || st.IdleTimeoutMs > 600000 {
-		return "", fmt.Errorf("%w: таймаут idle", ErrInvalid)
+		return "", fmt.Errorf("%w: idle timeout", ErrInvalid)
 	}
 	if st.AuditRetention < 7 || st.AuditRetention > 3650 {
-		return "", fmt.Errorf("%w: хранение аудита", ErrInvalid)
+		return "", fmt.Errorf("%w: audit retention", ErrInvalid)
 	}
 	if st.DNSRateQPS < 0 || st.DNSRateQPS > 100000 {
-		return "", fmt.Errorf("%w: лимит DNS", ErrInvalid)
+		return "", fmt.Errorf("%w: DNS rate limit", ErrInvalid)
 	}
 	st.AgentImage = strings.TrimSpace(st.AgentImage)
 	if st.AgentImage == "" {
 		st.AgentImage = "dnsmarty:local"
 	}
 	if len(st.AgentImage) > 200 || strings.ContainsAny(st.AgentImage, " \t\n") {
-		return "", fmt.Errorf("%w: образ агента", ErrInvalid)
+		return "", fmt.Errorf("%w: agent image", ErrInvalid)
 	}
 	parts := splitList(st.Bootstrap)
 	norm := make([]string, 0, len(parts))

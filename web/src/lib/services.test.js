@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dict } from "../i18n/dicts";
-import { parseDomainsInput, templateSummary } from "./services";
+import { parseDomainsInput, readTemplatePayload, templatePayloadFromService, templateSummary } from "./services";
 
 function tFor(lang) {
   return (key, params = {}) =>
@@ -27,6 +27,40 @@ describe("parseDomainsInput", () => {
 
   it("returns empty lists for blank input", () => {
     expect(parseDomainsInput("  \n ")).toEqual({ ok: [], bad: [] });
+  });
+});
+
+describe("readTemplatePayload", () => {
+  it("accepts an object from the API", () => {
+    const p = readTemplatePayload({ domains: [{ name: "a.com", match: "suffix" }], strategy: "weighted", proxies: [] });
+    expect(p.strategy).toBe("weighted");
+    expect(p.domains).toHaveLength(1);
+  });
+
+  it("parses a JSON string", () => {
+    const p = readTemplatePayload('{"domains":[{"name":"b.com"}],"strategy":"sticky24","proxies":[]}');
+    expect(p.strategy).toBe("sticky24");
+    expect(p.domains[0].name).toBe("b.com");
+  });
+
+  it("returns an empty payload for junk", () => {
+    expect(readTemplatePayload("nope").domains).toEqual([]);
+    expect(readTemplatePayload(null).strategy).toBe("round_robin");
+  });
+});
+
+describe("templatePayloadFromService", () => {
+  it("keeps only proxies that are on", () => {
+    const p = templatePayloadFromService({
+      strategy: "weighted",
+      members: [{ name: "a.com", match: "suffix", enabled: true, comment: "" }],
+      proxies: [
+        { proxy_id: "on", weight: 2, on: true },
+        { proxy_id: "off", weight: 9, on: false },
+      ],
+    });
+    expect(p.proxies).toEqual([{ proxy_id: "on", weight: 2 }]);
+    expect(p.domains).toEqual([{ name: "a.com", match: "suffix", enabled: true, comment: "" }]);
   });
 });
 

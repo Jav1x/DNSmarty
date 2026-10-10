@@ -50,8 +50,6 @@
 }
 .toast.err { border-left-color: var(--danger); }
 
-/* Switch styles live in ui.css (Radix Switch, «Лёд+»). */
-
 /* A block switched off: dimmed, its controls inert. */
 .block-off { opacity: 0.45; pointer-events: none; user-select: none; }
 
