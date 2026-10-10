@@ -210,6 +210,30 @@
 .finput.stats-ip { width: 180px; }
 td.hot { color: var(--danger); }
 
+/* ══ Журналы — фильтр-бар (лаба 9) ═════════════════════════════════════════
+   Общие классы (.sel/.quick/.chip/.finput/.histo/.card/.counts/.dec/.btn/
+   .pager) уже слиты в ui.css; здесь — каркас фильтр-бара и то, что лаба держала
+   inline: ширины полей, живой хинт домена, метки групп пилюль. Метки — .fbar .lbl
+   (скоуп фильтр-бара: голый .lbl в ui.css занят ячейками таблиц). */
+.fbar { background: rgba(255,255,255,.02); border: 1px solid var(--border);
+  border-radius: var(--r-m); animation: fadein .3s both; }
+.fbar .row1 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 11px 14px; border-bottom: 1px dashed var(--border); }
+.fbar .row2 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; }
+.fbar .lbl { font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); }
+.fbar .finput.dom { width: 220px; }
+.fbar .finput.ip { width: 170px; }
+.domwrap { position: relative; display: inline-flex; align-items: center; }
+.domhint { position: absolute; right: 10px; font-family: var(--mono); font-size: 10px;
+  color: rgba(62,199,255,.55); pointer-events: none; }
+.domhint.bad { color: var(--danger); }
+.timegrp { display: inline-flex; gap: 0; align-items: center; }
+.timegrp .finput { width: 106px; }
+input.dt:disabled { opacity: .45; cursor: default; }
+.dash { color: var(--muted); font-family: var(--mono); font-size: 11px; padding: 0 4px; }
+.activef { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 0 14px 10px; }
+
 /* ══ Ноды — визард «Новая нода» (лаба 10, mb2/pg1/pg2) ═════════════════════
    Общие классы (.sect/.tok/.copybtn/.frow3/.waitrow + keyframes waitsk) уже
    в ui.css; здесь — степпер, телеграм-стикер «связь» и мелочь, которую лаба
