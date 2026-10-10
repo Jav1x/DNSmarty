@@ -8,11 +8,11 @@
 //   Действия фазы 1: login {ip}, login.fail {ip}, logout {}, node.check {id, ok}.
 //   Поиск и пилюли типов фильтруются на клиенте (сервер фильтров не принимает);
 //   колонки «Источник» (IP) в контракте нет — IP приходит в детали login*.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import { EmptyRow, Err, SkeletonRows } from "../components/Bits";
-import { auditDetail, auditGroup } from "../lib/logsfilters";
+import { auditDetail, auditGroup, mergeById } from "../lib/logsfilters";
 
 const GROUPS = [
   ["login", "groupLogin"],
@@ -58,18 +58,24 @@ function Detail({ pairs }) {
 }
 
 export function Audit() {
-  const { t, err } = useI18n();
+  const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState("");
   const [rows, setRows] = useState(null);
   const [next, setNext] = useState(null);
   const [error, setError] = useState("");
+  const [loadingMore, setLoadingMore] = useState(false);
+  // moreRef — идёт ли «Загрузить ещё» (защита от двойного клика до ре-рендера);
+  // mountedRef — не применять ответ после размонтирования.
+  const moreRef = useRef(false);
+  const mountedRef = useRef(false);
 
-  // Первая страница: только при монтировании и после «Загрузить ещё» —
-  // фильтров на сервере нет, перезапрашивать нечего. live-флаг гасит ответ
+  // Первая страница — только при монтировании. Фильтров на сервере нет, поэтому
+  // смены запроса, кроме «Загрузить ещё», не бывает. live-флаг гасит ответ
   // размонтированного компонента; таймеров здесь нет.
   useEffect(() => {
     let live = true;
+    mountedRef.current = true;
     api("/api/audit")
       .then((out) => {
         if (!live) return;
@@ -80,22 +86,28 @@ export function Audit() {
       .catch((e) => {
         if (live) setError(e);
       });
-    return () => { live = false; };
+    return () => {
+      live = false;
+      mountedRef.current = false;
+    };
   }, []);
 
   async function loadMore() {
-    const p = new URLSearchParams();
-    if (next) {
-      p.set("before", next.at);
-      p.set("before_id", next.id);
-    }
+    if (moreRef.current || !next) return;
+    moreRef.current = true;
+    setLoadingMore(true);
+    const p = new URLSearchParams({ before: next.at, before_id: next.id });
     try {
       const out = await api(`/api/audit?${p}`);
-      setRows((r) => [...(r || []), ...out.rows]);
+      if (!mountedRef.current) return;
+      setRows((r) => mergeById(r, out.rows));
       setNext(out.next || null);
       setError("");
     } catch (e) {
-      setError(e);
+      if (mountedRef.current) setError(e);
+    } finally {
+      moreRef.current = false;
+      if (mountedRef.current) setLoadingMore(false);
     }
   }
 
@@ -141,7 +153,9 @@ export function Audit() {
             </thead>
             <tbody>
               {rows === null && !error && <SkeletonRows cols={4} />}
-              {rows !== null && !visible.length && <EmptyRow colSpan={4}>{t("noData")}</EmptyRow>}
+              {rows !== null && !visible.length && (
+                <EmptyRow colSpan={4}>{next ? t("noMatchLoaded") : t("noMatch")}</EmptyRow>
+              )}
               {visible.map((row) => (
                 <tr key={row.id} className={row.action === "login.fail" ? "err" : undefined}>
                   <td>{new Date(row.at).toLocaleString()}</td>
@@ -157,7 +171,7 @@ export function Audit() {
 
       {next && (
         <div className="pager">
-          <button type="button" className="btn ghost sm" onClick={loadMore}>{t("loadMore")}</button>
+          <button type="button" className="btn ghost sm" disabled={loadingMore} onClick={loadMore}>{t("loadMore")}</button>
         </div>
       )}
     </>

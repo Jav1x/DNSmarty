@@ -142,3 +142,16 @@ export function auditDetail(_action, raw) {
   }
   return Object.entries(parsed).map(([k, v]) => ({ k, v }));
 }
+
+// Склейка страниц: дубликаты по id (двойной клик «Загрузить ещё») отбрасываются.
+export function mergeById(prev, add) {
+  const base = prev || [];
+  const seen = new Set(base.map((r) => r.id));
+  const fresh = [];
+  for (const r of add) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    fresh.push(r);
+  }
+  return [...base, ...fresh];
+}

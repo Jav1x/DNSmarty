@@ -11,6 +11,7 @@ import {
   matchRow,
   auditGroup,
   auditDetail,
+  mergeById,
 } from "./logsfilters";
 
 describe("normDomainInput", () => {
@@ -201,4 +202,15 @@ describe("auditDetail", () => {
   });
   it("unparseable detail falls back to the raw text", () =>
     expect(auditDetail("login", "не json")).toEqual([{ k: "raw", v: "не json" }]));
+});
+
+describe("mergeById", () => {
+  it("appends new rows in order", () =>
+    expect(mergeById([{ id: 1 }], [{ id: 2 }, { id: 3 }]).map((r) => r.id)).toEqual([1, 2, 3]));
+  it("drops rows whose id is already loaded (double load-more)", () =>
+    expect(mergeById([{ id: 1 }, { id: 2 }], [{ id: 2 }, { id: 3 }]).map((r) => r.id)).toEqual([1, 2, 3]));
+  it("drops duplicates inside the appended page itself", () =>
+    expect(mergeById([], [{ id: 5 }, { id: 5 }]).map((r) => r.id)).toEqual([5]));
+  it("null previous rows behave as empty", () =>
+    expect(mergeById(null, [{ id: 7 }]).map((r) => r.id)).toEqual([7]));
 });

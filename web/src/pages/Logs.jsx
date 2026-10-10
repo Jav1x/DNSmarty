@@ -12,7 +12,7 @@
 //   rcode и ноды в контракте нет. Время и (у DNS) qtype/rcode фильтруются на
 //   клиенте по загруженным строкам — честно, потому что строки идут
 //   новее-наверху, а окно всегда кончается «сейчас»; колонки «Узел» нет.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import { EmptyRow, Err, SkeletonRows } from "../components/Bits";
@@ -22,6 +22,7 @@ import {
   histoBuckets,
   maskDate,
   matchRow,
+  mergeById,
   normDomainInput,
   parseDay,
   timeRange,
@@ -122,6 +123,13 @@ export function Logs() {
   const [rows, setRows] = useState(null);
   const [next, setNext] = useState(null);
   const [error, setError] = useState("");
+  const [loadingMore, setLoadingMore] = useState(false);
+  // genRef — поколение запроса: растёт на каждую смену вида/фильтров и при
+  // размонтировании. Ответ с другим поколением отбрасывается.
+  // moreRef — поколение текущей «Загрузить ещё» (null, если её нет): повторный
+  // клик, пока идёт первый, — no-op, даже до ре-рендера кнопки.
+  const genRef = useRef(0);
+  const moreRef = useRef(null);
 
   const setD = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const appliedKey = JSON.stringify(applied);
@@ -130,29 +138,45 @@ export function Logs() {
   // ответ сменённого запроса; таймеров здесь нет.
   useEffect(() => {
     let live = true;
+    const g = ++genRef.current;
+    moreRef.current = null;
+    setLoadingMore(false);
     setRows(null);
     api(`/api/logs?${logsParams(kind, applied, null)}`)
       .then((out) => {
-        if (!live) return;
+        if (!live || g !== genRef.current) return;
         setRows(out.rows);
         setNext(out.next || null);
         setError("");
       })
       .catch((e) => {
-        if (live) setError(e);
+        if (live && g === genRef.current) setError(e);
       });
-    return () => { live = false; };
+    return () => {
+      live = false;
+      genRef.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- appliedKey заменяет объект applied
   }, [kind, appliedKey]);
 
+  // Курсор и фильтры — из текущего рендера; ответ применяется только если
+  // поколение не сменилось (иначе это строки старого фильтра и старый курсор).
   async function loadMore() {
+    if (moreRef.current !== null || !next) return;
+    const g = genRef.current;
+    moreRef.current = g;
+    setLoadingMore(true);
     try {
       const out = await api(`/api/logs?${logsParams(kind, applied, next)}`);
-      setRows((r) => [...(r || []), ...out.rows]);
+      if (g !== genRef.current) return;
+      setRows((r) => mergeById(r, out.rows));
       setNext(out.next || null);
       setError("");
     } catch (e) {
-      setError(e);
+      if (g === genRef.current) setError(e);
+    } finally {
+      if (moreRef.current === g) moreRef.current = null;
+      if (g === genRef.current) setLoadingMore(false);
     }
   }
 
@@ -238,8 +262,8 @@ export function Logs() {
             <span className="dash">—</span>
             <input className="finput dt" value="" placeholder={t("today")} disabled aria-label={t("today")} />
           </span>
-          <button type="submit" className="apply" disabled={!dayValid}>{t("apply")}</button>
-          <button type="button" className="apply ghost" onClick={reset}>{t("reset")}</button>
+          <button type="submit" className="go" disabled={!dayValid}>{t("apply")}</button>
+          <button type="button" className="go ghost" onClick={reset}>{t("reset")}</button>
         </div>
         <div className="row2">
           {kind === "dns" ? (
@@ -257,9 +281,9 @@ export function Logs() {
           {chips.map((c) => (
             <FilterChip key={c.k} label={chipLabel(c, t)} onRemove={() => removeChip(c.k)} />
           ))}
-          {rows !== null && (
-            <span className="counts">{t("shown")} <b>{visible.length}</b></span>
-          )}
+          {rows !== null && (next
+            ? <span className="counts">{t("loadedCount")} <b>{visible.length}</b> / {rows.length}</span>
+            : <span className="counts">{t("shown")} <b>{visible.length}</b></span>)}
         </div>
       </form>
 
@@ -292,7 +316,9 @@ export function Logs() {
             </thead>
             <tbody>
               {rows === null && !error && <SkeletonRows cols={cols} />}
-              {rows !== null && !visible.length && <EmptyRow colSpan={cols}>{t("noData")}</EmptyRow>}
+              {rows !== null && !visible.length && (
+                <EmptyRow colSpan={cols}>{next && !exhausted ? t("noMatchLoaded") : t("noMatch")}</EmptyRow>
+              )}
               {kind === "dns" && visible.map((row) => <tr key={row.id}>{dnsCells(row, t)}</tr>)}
               {kind === "proxy" && visible.map((row) => (
                 <tr key={row.id} className={row.dial_error ? "err" : undefined}>{proxyCells(row, err)}</tr>
@@ -304,7 +330,7 @@ export function Logs() {
 
       {next && !exhausted && (
         <div className="pager">
-          <button type="button" className="btn ghost sm" onClick={loadMore}>{t("loadMore")}</button>
+          <button type="button" className="btn ghost sm" disabled={loadingMore} onClick={loadMore}>{t("loadMore")}</button>
         </div>
       )}
     </>

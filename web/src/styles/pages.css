@@ -234,6 +234,13 @@ td.hot { color: var(--danger); }
 .fbar .row2 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; }
 .fbar .lbl { font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
   text-transform: uppercase; color: var(--muted); }
+/* Кнопки «Применить»/«Сбросить» фильтра. Свой скоуп .fbar .go: класс .apply в ui.css
+   — бейдж статуса применения в Настройках, его сюда не тянем. */
+.fbar .go { font-family: var(--mono); font-size: 11.5px; font-weight: 700; background: var(--accent);
+  color: var(--accent-ink); border: 0; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+.fbar .go:disabled { opacity: .35; cursor: default; }
+.fbar .go.ghost { background: transparent; color: var(--muted); font-weight: 400;
+  border: 1px solid var(--border); }
 .fbar .finput.dom { width: 220px; }
 .fbar .finput.ip { width: 170px; }
 .domwrap { position: relative; display: inline-flex; align-items: center; }
