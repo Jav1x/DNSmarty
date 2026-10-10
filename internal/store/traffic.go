@@ -19,12 +19,13 @@ import (
 var partName = regexp.MustCompile(`^(dns_hit|proxy_session)_([0-9]{8})$`)
 
 type DNSHit struct {
-	At       time.Time
-	ClientIP string
-	QName    string
-	QType    string
-	Rcode    string
-	Decision string
+	At        time.Time
+	ClientIP  string
+	QName     string
+	QType     string
+	Rcode     string
+	Decision  string
+	LatencyMS *int
 }
 
 type ProxyReport struct {
@@ -44,7 +45,8 @@ type DNSLog struct {
 	Name     string    `json:"name"`
 	QType    string    `json:"qtype"`
 	Rcode    string    `json:"rcode"`
-	Decision string    `json:"decision"`
+	Decision  string    `json:"decision"`
+	LatencyMS *int      `json:"latency_ms"`
 }
 
 type ProxyLog struct {
@@ -130,9 +132,9 @@ func (s *Store) InsertHits(ctx context.Context, nodeID string, hits []DNSHit) (s
 		}
 		at := clampAt(h.At, now)
 		rows = append(rows, []any{dayOf(at), at, node, ip,
-			clip(h.QName, 255), clip(h.QType, 16), clip(h.Rcode, 32), clip(h.Decision, 16)})
+			clip(h.QName, 255), clip(h.QType, 16), clip(h.Rcode, 32), clip(h.Decision, 16), h.LatencyMS})
 	}
-	cols := []string{"day", "at", "node_id", "client_ip", "qname", "qtype", "rcode", "decision"}
+	cols := []string{"day", "at", "node_id", "client_ip", "qname", "qtype", "rcode", "decision", "latency_ms"}
 	return skipped, s.copyChunks(ctx, "dns_hit", cols, rows)
 }
 
@@ -352,7 +354,7 @@ func (s *Store) DNSLogs(ctx context.Context, name, ip, decision string, p Page) 
 		return nil, nil, err
 	}
 	clauses, args = pageClause(p, clauses, args)
-	rows, err := s.pool.Query(ctx, `SELECT id, at, coalesce(host(client_ip), ''), qname, qtype, rcode, decision FROM dns_hit WHERE `+strings.Join(clauses, " AND ")+` ORDER BY at DESC, id DESC LIMIT `+strconv.Itoa(p.Limit+1), args...)
+	rows, err := s.pool.Query(ctx, `SELECT id, at, coalesce(host(client_ip), ''), qname, qtype, rcode, decision, latency_ms FROM dns_hit WHERE `+strings.Join(clauses, " AND ")+` ORDER BY at DESC, id DESC LIMIT `+strconv.Itoa(p.Limit+1), args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -466,7 +468,7 @@ func scanDNS(rows pgx.Rows, limit int) ([]DNSLog, *Cursor, error) {
 	out := make([]DNSLog, 0, limit)
 	for rows.Next() {
 		var r DNSLog
-		if err := rows.Scan(&r.ID, &r.At, &r.ClientIP, &r.Name, &r.QType, &r.Rcode, &r.Decision); err != nil {
+		if err := rows.Scan(&r.ID, &r.At, &r.ClientIP, &r.Name, &r.QType, &r.Rcode, &r.Decision, &r.LatencyMS); err != nil {
 			return nil, nil, err
 		}
 		out = append(out, r)
