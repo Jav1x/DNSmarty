@@ -88,6 +88,8 @@ type Overview struct {
 	Nodes      []Node   `json:"nodes"`
 	BayProxies []Node   `json:"bay_proxies"`
 	Rows       []BayRow `json:"rows"`
+	LatencyAvg *float64 `json:"latency_avg_ms"`
+	LatencyP95 *float64 `json:"latency_p95_ms"`
 }
 
 // Page is a keyset cursor: rows older than (Before, BeforeID), newest first.
@@ -105,11 +107,12 @@ type Cursor struct {
 
 // SeriesPoint is one time bucket of the overview chart.
 type SeriesPoint struct {
-	T        time.Time `json:"t"`
-	DNS      int64     `json:"dns"`
-	Refused  int64     `json:"refused"`
-	Sessions int64     `json:"sessions"`
-	Bytes    int64     `json:"bytes"`
+	T         time.Time `json:"t"`
+	DNS       int64     `json:"dns"`
+	Refused   int64     `json:"refused"`
+	Sessions  int64     `json:"sessions"`
+	Bytes     int64     `json:"bytes"`
+	LatencyMS *float64  `json:"latency_ms"`
 }
 
 // insertChunk bounds one COPY. The agent buffers up to 2000 rows per kind between pushes.
@@ -304,8 +307,10 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 		  (SELECT count(*) FROM dns_hit WHERE at > now() - interval '60 seconds' AND decision = 'acl'),
 		  (SELECT count(*) FROM proxy_session WHERE at > now() - interval '60 seconds'),
 		  (SELECT coalesce(sum(bytes_up + bytes_down), 0) FROM proxy_session WHERE at > now() - interval '24 hours'),
-		  (SELECT count(*) FROM node WHERE enabled AND NOT `+nodeFresh+`)
-	`).Scan(&o.QPS, &o.Refused, &o.Sessions, &o.Bytes, &o.Stale)
+		  (SELECT count(*) FROM node WHERE enabled AND NOT `+nodeFresh+`),
+		  (SELECT avg(latency_ms)::float8 FROM dns_hit WHERE at > now() - interval '60 seconds'),
+		  (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::float8 FROM dns_hit WHERE at > now() - interval '60 seconds')
+	`).Scan(&o.QPS, &o.Refused, &o.Sessions, &o.Bytes, &o.Stale, &o.LatencyAvg, &o.LatencyP95)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -404,7 +409,8 @@ func (s *Store) Series(ctx context.Context, window, step time.Duration) ([]Serie
 	rows, err := s.pool.Query(ctx, `
 		WITH d AS (
 			SELECT date_bin(make_interval(secs => $2), at, timestamptz '2000-01-01') AS t,
-			       count(*) AS n, count(*) FILTER (WHERE decision = 'acl') AS ref
+			       count(*) AS n, count(*) FILTER (WHERE decision = 'acl') AS ref,
+			       avg(latency_ms)::float8 AS lat
 			FROM dns_hit
 			WHERE at > now() - make_interval(secs => $1)
 			GROUP BY 1
@@ -415,7 +421,7 @@ func (s *Store) Series(ctx context.Context, window, step time.Duration) ([]Serie
 			WHERE at > now() - make_interval(secs => $1)
 			GROUP BY 1
 		)
-		SELECT coalesce(d.t, p.t), coalesce(d.n, 0), coalesce(d.ref, 0), coalesce(p.n, 0), coalesce(p.b, 0)
+		SELECT coalesce(d.t, p.t), coalesce(d.n, 0), coalesce(d.ref, 0), coalesce(p.n, 0), coalesce(p.b, 0), d.lat
 		FROM d FULL OUTER JOIN p ON d.t = p.t
 		ORDER BY 1
 	`, window.Seconds(), step.Seconds())
@@ -427,7 +433,7 @@ func (s *Store) Series(ctx context.Context, window, step time.Duration) ([]Serie
 	for rows.Next() {
 		var t time.Time
 		var pt SeriesPoint
-		if err := rows.Scan(&t, &pt.DNS, &pt.Refused, &pt.Sessions, &pt.Bytes); err != nil {
+		if err := rows.Scan(&t, &pt.DNS, &pt.Refused, &pt.Sessions, &pt.Bytes, &pt.LatencyMS); err != nil {
 			return nil, err
 		}
 		pt.T = t
