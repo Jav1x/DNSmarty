@@ -99,7 +99,7 @@ func TestUpstreamProto(t *testing.T) {
 	}
 }
 
-func TestDoTFallsBackToUDPWhenCertDoesNotMatch(t *testing.T) {
+func TestDoTCertMismatchFallsThroughToNextUpstream(t *testing.T) {
 	cert, pool := selfSigned(t, "dot.test")
 	dot := "tls://" + startDoT(t, cert, "192.0.2.7")
 	udp := startUDP(t, "192.0.2.9")
