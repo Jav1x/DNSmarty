@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -110,6 +111,22 @@ func TestNodeDisableContract(t *testing.T) {
 		t.Fatalf("POST /api/nodes/{id} {enabled:false}: %d %s", code, raw)
 	}
 
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if n := auditCount(ctx, t, pool, "node.disable"); n != 1 {
+		t.Fatalf("node.disable в аудите: %d строк, ждём 1", n)
+	}
+	code, raw = apiNodes(t, ts.URL, sess, http.MethodPost, "/api/nodes/"+id, body)
+	if code != http.StatusOK {
+		t.Fatalf("повторное отключение: %d %s", code, raw)
+	}
+	if n := auditCount(ctx, t, pool, "node.disable"); n != 1 {
+		t.Fatalf("повторное отключение без изменения добавило строку аудита: %d", n)
+	}
+
 	// Список после отключения: enabled=false (и, следовательно, fresh=false).
 	off := nodeByID(t, ts.URL, sess, id)
 	if off == nil {
@@ -137,6 +154,15 @@ func TestNodeDisableContract(t *testing.T) {
 	if got := nodeByID(t, ts.URL, sess, id); got != nil {
 		t.Fatalf("DELETE не удалил ноду: %#v", got)
 	}
+}
+
+func auditCount(ctx context.Context, t *testing.T, pool *pgxpool.Pool, action string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = $1`, action).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 // apiNodes делает авторизированный запрос к /api/nodes и возвращает статус и тело.

@@ -129,6 +129,10 @@ func (s *Store) UpdateNode(ctx context.Context, actor, id string, in NodeInput) 
 		return err
 	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
+		var was bool
+		if err := tx.QueryRow(ctx, `SELECT enabled FROM node WHERE id = $1 FOR UPDATE`, id).Scan(&was); err != nil {
+			return mapErr(err)
+		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE node
 			SET role = $2, name = $3, public_ipv4 = $4::inet, public_ipv6 = $5::inet, region = $6, enabled = $7,
@@ -142,7 +146,17 @@ func (s *Store) UpdateNode(ctx context.Context, actor, id string, in NodeInput) 
 			return ErrNotFound
 		}
 		raw, _ := json.Marshal(map[string]any{"id": id, "name": in.Name, "enabled": in.Enabled})
-		return auditTx(ctx, tx, actor, "node.update", raw)
+		if err := auditTx(ctx, tx, actor, "node.update", raw); err != nil {
+			return err
+		}
+		if in.Enabled == was {
+			return nil
+		}
+		action := "node.disable"
+		if in.Enabled {
+			action = "node.enable"
+		}
+		return auditTx(ctx, tx, actor, action, raw)
 	})
 }
 
