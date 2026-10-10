@@ -10,3 +10,5 @@ certs/**/*.key
 certs/**/*.crt
 .DS_Store
 /state/
+
+docs/
