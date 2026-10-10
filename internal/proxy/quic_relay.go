@@ -39,10 +39,7 @@ func (s *Server) serveQUIC(ctx context.Context, pc net.PacketConn) error {
 	for {
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				s.closeQUIC()
-				return nil
-			}
+			s.closeQUIC()
 			return err
 		}
 		pkt := append([]byte(nil), buf[:n]...)
