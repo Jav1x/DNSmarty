@@ -1,7 +1,7 @@
 // Аккаунт (лаба 14, фаза 1): профиль-банд, 01 смена пароля с живым индикатором
-// надёжности (4 сегмента + слово, проверка совпадения на лету), 04 активные
-// сессии, 05 недавняя активность (аудит этого пользователя). Секции 02 (2FA)
-// и 03 (OAuth) в фазе 1 не рендерятся — появятся вместе с бэкендом (фаза 2).
+// надёжности (4 сегмента + слово, проверка совпадения на лету), 02 активные
+// сессии, 03 недавняя активность (аудит этого пользователя). 2FA и OAuth в фазе 1
+// не рендерятся — вернутся вместе с бэкендом (фаза 2) и сдвинут номера.
 //
 // Контракт (проверен по internal/panel/api.go и store/admin.go):
 //   GET  /api/me                       → { user, csrf, session_id, version } — роли в ответе нет;
@@ -27,6 +27,7 @@ import { ago, deviceIcon, pwStrength } from "../lib/util";
 // Слова надёжности по сегментам (лаба 14): 1 слабый · 2 посредственный ·
 // 3 хороший · 4 отличный; пустое поле — «минимум 12 символов».
 const PW_WORDS = ["", "pwWeak", "pwFair", "pwGood", "pwGreat"];
+const SHORT_DATE = { dateStyle: "short", timeStyle: "short" };
 
 // Человеческое имя действия аудита; незнакомые действия — как есть (фаза 1
 // знает login/login.fail/logout/node.check, см. logsfilters.auditGroup).
@@ -198,7 +199,7 @@ export function Account() {
 
       <section className="sect">
         <h2>
-          <span className="wrapl"><span className="snum">04</span>{t("activeSessions")}</span>
+          <span className="wrapl"><span className="snum">02</span>{t("activeSessions")}</span>
           {rows.length > 1 && (
             <button type="button" className="btn ghost sm" onClick={revokeOthers}>{t("revokeOthers")}</button>
           )}
@@ -226,9 +227,9 @@ export function Account() {
                     </span>
                   </td>
                   <td className="mono">{s.ip || "—"}</td>
-                  <td>{new Date(s.created_at).toLocaleString()}</td>
+                  <td>{new Date(s.created_at).toLocaleString(undefined, SHORT_DATE)}</td>
                   <td className="rel">{s.last_seen_at ? ago(s.last_seen_at, t) : "—"}</td>
-                  <td className="rel">{new Date(s.expires_at).toLocaleString()}</td>
+                  <td className="rel">{new Date(s.expires_at).toLocaleString(undefined, SHORT_DATE)}</td>
                   <td>
                     {s.current
                       ? <span className="curtag">{t("thisDevice")}</span>
@@ -254,7 +255,7 @@ export function Account() {
       <section className="sect">
         <h2>
           <span className="wrapl">
-            <span className="snum">05</span>{t("recentActivity")}
+            <span className="snum">03</span>{t("recentActivity")}
             <small>{t("fromAudit")}</small>
           </span>
           <Link className="btn ghost sm" to="/audit">{t("allAudit")}</Link>

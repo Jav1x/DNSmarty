@@ -429,7 +429,7 @@ tr:hover .acts, tr:hover .acts2, .sacts { opacity: 1; }
 .dev { display: flex; align-items: center; gap: 9px; }
 .dev .dic { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--border);
   display: grid; place-items: center; font-size: 12px; color: var(--muted); flex: none; }
-.dev .dn { font-size: 12px; }
+.dev .dn { font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev .ds { font-size: 10px; color: var(--muted); }
 .rel { color: var(--muted); }
 /* QR и резервные коды 2FA (lab14, фаза 2): */
