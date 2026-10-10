@@ -65,7 +65,7 @@ export function Overview() {
   const { t } = useI18n();
   const [updatedAt, setUpdatedAt] = useState(null);
   const [agoSec, setAgoSec] = useState(0);
-  const [hist, setHist] = useState({ qps: [], blocked: [] });
+  const [hist, setHist] = useState({ qps: [], blocked: [], lat: [] });
   const load = useLoad("/api/overview");
   const series = useLoad("/api/overview/series?window=1h");
   const stats = useLoad("/api/stats?window=24h&limit=8");
@@ -89,6 +89,7 @@ export function Overview() {
     setHist((h) => ({
       qps: pushHist(h.qps, load.data.overview?.qps || 0, HIST_N),
       blocked: share === null ? h.blocked : pushHist(h.blocked, share, HIST_N),
+      lat: load.data.overview?.latency_avg_ms == null ? h.lat : pushHist(h.lat, load.data.overview.latency_avg_ms, HIST_N),
     }));
   }, [updatedAt]);
   if (!load.data) return <div className="mod"><Err text={load.error} />{!load.error && <SkeletonRows cols={5} />}</div>;
@@ -115,7 +116,7 @@ export function Overview() {
         )}
       </div>
 
-      {/* приборная полоса: живой QPS + спарклайны (время ответа — фаза 2) */}
+      {/* приборная полоса: живой QPS + спарклайны */}
       <div className="hero ov no-rt">
         <div className="bigqps">
           <span className="v">{o.qps}</span>
@@ -125,6 +126,8 @@ export function Overview() {
         <HeroSpark cls="a" label={t("sparkDns")} value={`${o.qps} ${t("qpsShort")}`} values={hist.qps} />
         <div className="vsep" />
         <HeroSpark cls="d" label={t("blockedCol")} value={series.data ? `${share.toFixed(1)}%` : "—"} values={hist.blocked} />
+        <div className="vsep" />
+        <HeroSpark cls="t" label={t("sparkLatency")} value={o.latency_avg_ms == null ? "—" : `${Math.round(o.latency_avg_ms)} ms`} values={hist.lat} />
       </div>
 
       {/* доска */}

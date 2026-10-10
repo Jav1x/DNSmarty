@@ -21,7 +21,7 @@ import Modal from "../ui/Modal";
 import Switch from "../ui/Switch";
 import Tip from "../ui/Tip";
 import TrashButton from "../ui/TrashButton";
-import { ago } from "../lib/util";
+import { ago, hwRows } from "../lib/util";
 import NewNodeModal from "./nodes/NewNodeModal.jsx";
 
 // NodeInput из строки сервера (+ явная замена enabled для bulk-операций).
@@ -380,7 +380,7 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
         </>
       )}
     >
-      {/* 1 · состояние: read-only снимок; hw-поля «—» до фазы 2 */}
+      {/* 1 · состояние: read-only снимок, железо из последнего отчёта агента */}
       <section className="sect">
         <h3>{t("stateSect")}<small>{t("stateSectSub")}</small></h3>
         <div className="sbody">
@@ -394,13 +394,12 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
               <div className="kv"><span>{t("proxySessKv")}</span><b>—</b></div>
             </div>
             <div className="col">
-              <div className="kv"><span>{t("hwCpu")}</span><b>—</b></div>
-              <div className="kv"><span>{t("hwMem")}</span><b>—</b></div>
-              <div className="kv"><span>{t("hwOs")}</span><b>—</b></div>
-              <div className="kv"><span>{t("hwDisk")}</span><b>—</b></div>
+              {hwRows(node.last_hw || {}).map(([k, v]) => (
+                <div className="kv" key={k}><span>{t(k)}</span><b>{v}</b></div>
+              ))}
             </div>
           </div>
-          <div className="hint">{t("stateHwHint")}</div>
+          {!node.last_hw && <div className="hint">{t("stateHwWait")}</div>}
         </div>
       </section>
 

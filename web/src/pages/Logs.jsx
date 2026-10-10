@@ -101,6 +101,7 @@ function dnsCells(row, t) {
     <td key="q">{row.qtype}</td>,
     <td key="r" className={row.rcode && row.rcode !== "NOERROR" ? "hot" : undefined}>{row.rcode}</td>,
     <td key="d" className={cls}>{row.decision === "acl" ? t("blockedCol") : row.decision}</td>,
+    <td key="l" className="mono">{row.latency_ms == null ? "—" : `${row.latency_ms} ms`}</td>,
   ];
 }
 
@@ -305,7 +306,7 @@ export function Logs() {
               {kind === "dns" ? (
                 <tr>
                   <th>{t("time")}</th><th>{t("clientIp")}</th><th>{t("domain")}</th>
-                  <th>{t("type")}</th><th>{t("rcode")}</th><th>{t("decision")}</th>
+                  <th>{t("type")}</th><th>{t("rcode")}</th><th>{t("decision")}</th><th>{t("latencyCol")}</th>
                 </tr>
               ) : (
                 <tr>

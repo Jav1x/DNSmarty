@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare, statsPath, clientStatsPath, cleanClientIp, pwStrength, deviceIcon } from './util'
+import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare, statsPath, clientStatsPath, cleanClientIp, pwStrength, deviceIcon, hwRows } from './util'
 
 describe('normFqdn', () => {
   it('lowercases and trims trailing dot', () => expect(normFqdn(' Example.COM. ')).toBe('example.com'))
@@ -112,4 +112,20 @@ describe('deviceIcon', () => {
   it('desktop UA is a computer', () => expect(deviceIcon('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15')).toBe('💻'))
   it('empty UA defaults to computer', () => expect(deviceIcon('')).toBe('💻'))
   it('undefined UA defaults to computer', () => expect(deviceIcon(undefined)).toBe('💻'))
+})
+
+describe('hwRows', () => {
+  it('empty report renders dashes', () => {
+    expect(hwRows({}).map(([, v]) => v)).toEqual(['—', '—', '—', '—'])
+  })
+  it('full report formats cpu, memory, system, disk', () => {
+    const rows = Object.fromEntries(hwRows({
+      cpu_model: 'Xeon', cpu_cores: 4, mem_total_mb: 2048, mem_used_pct: 40.6,
+      os: 'Debian', kernel: '6.1', disk_total_gb: 20, disk_used_gb: 5.25,
+    }))
+    expect(rows.hwCpu).toBe('Xeon · 4')
+    expect(rows.hwMem).toBe('2.0 GB · 41%')
+    expect(rows.hwOs).toBe('Debian · 6.1')
+    expect(rows.hwDisk).toBe('5.3 / 20.0 GB')
+  })
 })

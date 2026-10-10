@@ -126,3 +126,14 @@ export function pwStrength(pw) {
 export function deviceIcon(userAgent) {
   return /iphone|android|mobile/i.test(String(userAgent ?? "")) ? "📱" : "💻";
 }
+
+// Строки блока «Состояние»: пустые поля отчёта агента показываем прочерком.
+export function hwRows(hw) {
+  const fmt = (v, f) => (v == null || v === "" ? "—" : f(v));
+  return [
+    ["hwCpu", fmt(hw.cpu_model, (m) => (hw.cpu_cores ? `${m} · ${hw.cpu_cores}` : m))],
+    ["hwMem", fmt(hw.mem_total_mb, (mb) => `${(mb / 1024).toFixed(1)} GB · ${fmt(hw.mem_used_pct, (p) => `${Math.round(p)}%`)}`)],
+    ["hwOs", fmt(hw.os, (o) => (hw.kernel ? `${o} · ${hw.kernel}` : o))],
+    ["hwDisk", fmt(hw.disk_total_gb, (tot) => `${fmt(hw.disk_used_gb, (u) => u.toFixed(1))} / ${tot.toFixed(1)} GB`)],
+  ];
+}
