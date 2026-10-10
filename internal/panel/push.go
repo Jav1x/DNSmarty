@@ -172,7 +172,7 @@ func (s *Server) storeStats(ctx context.Context, n store.Node, stats agent.Stats
 	hits := make([]store.DNSHit, 0, len(stats.Hits))
 	for _, h := range stats.Hits {
 		hits = append(hits, store.DNSHit{
-			At: h.At, ClientIP: h.ClientIP, QName: h.QName, QType: h.QType, Rcode: h.Rcode, Decision: h.Decision,
+			At: h.At, ClientIP: h.ClientIP, QName: h.QName, QType: h.QType, Rcode: h.Rcode, Decision: h.Decision, LatencyMS: h.LatencyMS,
 		})
 	}
 	skippedHits, err := s.store.InsertHits(ctx, n.ID, hits)

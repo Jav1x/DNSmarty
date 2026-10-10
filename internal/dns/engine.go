@@ -36,7 +36,8 @@ type Hit struct {
 	QName    string
 	QType    string
 	Rcode    string
-	Decision string
+	Decision  string
+	LatencyMS *int
 }
 
 type Engine struct {
@@ -213,6 +214,7 @@ func readDoH(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 }
 
 func (e *Engine) Resolve(client netip.Addr, req *mdns.Msg) *mdns.Msg {
+	start := time.Now()
 	if req == nil || len(req.Question) != 1 {
 		m := new(mdns.Msg)
 		if req != nil {
@@ -224,17 +226,17 @@ func (e *Engine) Resolve(client netip.Addr, req *mdns.Msg) *mdns.Msg {
 	q := req.Question[0]
 	if req.Opcode != mdns.OpcodeQuery {
 		resp := reply(req, mdns.RcodeNotImplemented, nil, 0)
-		e.note(client, q, resp, "notimp")
+		e.note(client, q, resp, "notimp", time.Since(start))
 		return resp
 	}
 	if q.Qclass != mdns.ClassINET {
 		resp := reply(req, mdns.RcodeRefused, nil, 0)
-		e.note(client, q, resp, "class")
+		e.note(client, q, resp, "class", time.Since(start))
 		return resp
 	}
 	if !e.enabled.Load() {
 		resp := reply(req, mdns.RcodeRefused, nil, 0)
-		e.note(client, q, resp, "disabled")
+		e.note(client, q, resp, "disabled", time.Since(start))
 		return resp
 	}
 	c := e.snap.Load()
@@ -242,7 +244,7 @@ func (e *Engine) Resolve(client netip.Addr, req *mdns.Msg) *mdns.Msg {
 	if q.Qtype == mdns.TypeANY && d.Action != ActionRefuse && d.Action != ActionFail {
 		// RFC 8482: ANY is the classic amplification query; answer with one small record.
 		resp := hinfoReply(req, d.TTL)
-		e.note(client, q, resp, "any")
+		e.note(client, q, resp, "any", time.Since(start))
 		return resp
 	}
 	var resp *mdns.Msg
@@ -281,11 +283,11 @@ func (e *Engine) Resolve(client netip.Addr, req *mdns.Msg) *mdns.Msg {
 		resp = reply(req, mdns.RcodeServerFailure, nil, 0)
 		d.Action = ActionFail
 	}
-	e.note(client, q, resp, string(d.Action))
+	e.note(client, q, resp, string(d.Action), time.Since(start))
 	return resp
 }
 
-func (e *Engine) note(client netip.Addr, q mdns.Question, resp *mdns.Msg, decision string) {
+func (e *Engine) note(client netip.Addr, q mdns.Question, resp *mdns.Msg, decision string, took time.Duration) {
 	rcode := "UNKNOWN"
 	if resp != nil {
 		if name, ok := mdns.RcodeToString[resp.Rcode]; ok {
@@ -301,13 +303,15 @@ func (e *Engine) note(client netip.Addr, q mdns.Question, resp *mdns.Msg, decisi
 	if name, ok := mdns.TypeToString[q.Qtype]; ok {
 		qtype = name
 	}
+	ms := int(took.Milliseconds())
 	h := Hit{
-		At:       time.Now().UTC(),
-		ClientIP: ip,
-		QName:    q.Name,
-		QType:    qtype,
-		Rcode:    rcode,
-		Decision: decision,
+		At:        time.Now().UTC(),
+		ClientIP:  ip,
+		QName:     q.Name,
+		QType:     qtype,
+		Rcode:     rcode,
+		Decision:  decision,
+		LatencyMS: &ms,
 	}
 	select {
 	case e.hits <- h:

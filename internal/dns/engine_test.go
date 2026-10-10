@@ -123,6 +123,21 @@ func TestANYGetsHINFO(t *testing.T) {
 	}
 }
 
+func TestLatencyRecorded(t *testing.T) {
+	e := engineWith(t, snapshot.DNS{Upstreams: []string{bigUpstream(t)}})
+	q := new(mdns.Msg)
+	q.SetQuestion("cdn.test.", mdns.TypeA)
+	e.Resolve(netip.MustParseAddr("192.0.2.1"), q)
+	select {
+	case h := <-e.Hits():
+		if h.LatencyMS == nil || *h.LatencyMS < 0 {
+			t.Fatalf("latency = %v, want measured value >= 0", h.LatencyMS)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no hit recorded")
+	}
+}
+
 func TestANYRefusedOutsideACL(t *testing.T) {
 	e := engineWith(t, snapshot.DNS{Deny: []string{"192.0.2.0/24"}})
 	q := new(mdns.Msg)
