@@ -80,3 +80,8 @@
 .weight { display: inline-flex; align-items: center; gap: 6px; }
 
 .members .row-actions select { width: auto; }
+
+.qr { width: 168px; height: 168px; background: #fff; padding: 8px; border-radius: 8px; }
+.codes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0 16px; }
+.codes button { font-family: var(--mono); }
+.codes button.used { opacity: 0.45; text-decoration: line-through; }

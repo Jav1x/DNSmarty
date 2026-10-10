@@ -61,6 +61,7 @@ export function I18nProvider({ children }) {
       csrf: "errCsrf",
       rate_limited: "errRateLimited",
       bad_credentials: "errBadCredentials",
+      bad_code: "errBadCode",
       wrong_password: "errWrongPassword",
       weak_password: "errWeakPassword",
       conflict: "errConflict",

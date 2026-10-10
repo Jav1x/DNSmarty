@@ -27,9 +27,8 @@ function sceneSparks() {
 export function Login({ onIn }) {
   const { t, err } = useI18n();
   const [error, setError] = useState("");
-  // 2FA-заготовка: ветка включается только когда ответ /api/login содержит
-  // {totp_required:true, ticket} — бэкенд начнёт так отвечать в фазе 2,
-  // до тех пор ветка не срабатывает. Отправка кода — тоже фаза 2.
+  // Пароль при включённой 2FA возвращает {totp_required:true, ticket}.
+  // Код уходит на POST /api/login/totp и только тогда открывает сессию.
   const [totpTicket, setTotpTicket] = useState(null);
   const [totpCode, setTotpCode] = useState("");
   // OAuth-заготовка: фаза 1 не запрашивает GET /api/auth/providers (эндпоинта нет),
@@ -43,9 +42,20 @@ export function Login({ onIn }) {
       const out = await api("/api/login", { method: "POST", body: JSON.stringify({ username: data.get("username"), password: data.get("password") }) });
       if (out && out.totp_required) {
         setTotpTicket(out.ticket ?? "");
+        setTotpCode("");
         setError("");
         return;
       }
+      onIn(out.user, out.csrf);
+    } catch (e) {
+      setError(e);
+    }
+  }
+
+  async function submitTotp(event) {
+    event.preventDefault();
+    try {
+      const out = await api("/api/login/totp", { method: "POST", body: JSON.stringify({ ticket: totpTicket, code: totpCode }) });
       onIn(out.user, out.csrf);
     } catch (e) {
       setError(e);
@@ -112,11 +122,11 @@ export function Login({ onIn }) {
           </form>
         ) : (
           /* 2FA-шаг: поле кода; отправка кода подключается в фазе 2. */
-          <form className="f" onSubmit={(e) => e.preventDefault()}>
+          <form className="f" onSubmit={submitTotp}>
             <p className="lead">{t("twoFactorTitle")}</p>
             <label htmlFor="l-totp">{t("twoFactorCode")}</label>
-            <input id="l-totp" name="totp" inputMode="numeric" autoComplete="one-time-code" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
-            <button className="btn" type="submit" disabled>{t("signIn")}</button>
+            <input id="l-totp" name="totp" inputMode="numeric" autoComplete="one-time-code" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} required />
+            <button className="btn" type="submit">{t("signIn")}</button>
             <p className="hint">{t("twoFactorHint")}</p>
           </form>
         )}

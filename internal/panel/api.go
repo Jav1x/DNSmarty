@@ -98,6 +98,22 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.limiter.success(ip)
+	totpOn, err := s.store.TOTPEnabled(r.Context(), id)
+	if err != nil {
+		s.log.Error("login", "err", err)
+		writeErr(w, http.StatusInternalServerError, "internal", "Панель не смогла проверить пароль.")
+		return
+	}
+	if totpOn {
+		ticket, err := s.store.IssueLoginTicket(r.Context(), id)
+		if err != nil {
+			s.log.Error("login", "err", err)
+			writeErr(w, http.StatusInternalServerError, "internal", "Сессия не создана.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"totp_required": true, "ticket": ticket})
+		return
+	}
 	cookie, csrf, err := s.store.CreateSession(r.Context(), id, ip, r.UserAgent())
 	if err != nil {
 		s.log.Error("session", "err", err)

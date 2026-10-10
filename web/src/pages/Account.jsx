@@ -1,7 +1,5 @@
-// Аккаунт (лаба 14, фаза 1): профиль-банд, 01 смена пароля с живым индикатором
-// надёжности (4 сегмента + слово, проверка совпадения на лету), 02 активные
-// сессии, 03 недавняя активность (аудит этого пользователя). 2FA и OAuth в фазе 1
-// не рендерятся — вернутся вместе с бэкендом (фаза 2) и сдвинут номера.
+// Аккаунт: профиль, 01 пароль, 02 двухфакторная (TOTP + резервные коды),
+// 03 сессии, 04 недавняя активность. OAuth появится отдельным шагом и сдвинет номера.
 //
 // Контракт (проверен по internal/panel/api.go и store/admin.go):
 //   GET  /api/me                       → { user, csrf, session_id, version } — роли в ответе нет;
@@ -38,6 +36,8 @@ const ACT_KEYS = {
   "node.check": "actNodeCheck",
   "session.revoke": "actSessionRevoke",
   "password.change": "actPasswordChange",
+  "totp.enable": "actTotpEnable",
+  "totp.disable": "actTotpDisable",
 };
 
 // Лампа-точка строки активности: вход — зелёная, отказ входа — красная,
@@ -60,6 +60,11 @@ export function Account() {
   const [pwdError, setPwdError] = useState("");
   const [ask, confirmRow] = useConfirm();
   const toast = useToast();
+  const totp = useLoad("/api/account/2fa/codes");
+  const [setup, setSetup] = useState(null);
+  const [totpCode, setTotpCode] = useState("");
+  const [totpError, setTotpError] = useState("");
+  const [totpPass, setTotpPass] = useState("");
 
   const user = me.data?.user;
   const rows = data || [];
@@ -107,8 +112,49 @@ export function Account() {
     });
   }
 
+  async function startTotp() {
+    setTotpError("");
+    try {
+      setSetup(await api("/api/account/2fa/setup", { method: "POST", body: "{}" }));
+      setTotpCode("");
+    } catch (e) { setTotpError(e); }
+  }
+
+  async function confirmTotp(event) {
+    event.preventDefault();
+    setTotpError("");
+    try {
+      await api("/api/account/2fa/enable", { method: "POST", body: JSON.stringify({ code: totpCode }) });
+      setSetup(null);
+      setTotpCode("");
+      totp.reload();
+      audit.reload();
+    } catch (e) { setTotpError(e); }
+  }
+
+  async function disableTotp(event) {
+    event.preventDefault();
+    setTotpError("");
+    try {
+      await api("/api/account/2fa/disable", { method: "POST", body: JSON.stringify({ password: totpPass }) });
+      setTotpPass("");
+      totp.reload();
+      audit.reload();
+    } catch (e) { setTotpError(e); }
+  }
+
+  async function markCode(id) {
+    setTotpError("");
+    try {
+      await api(`/api/account/2fa/codes/${id}`, { method: "POST", body: "{}" });
+      totp.reload();
+    } catch (e) { setTotpError(e); }
+  }
+
   const score = pwStrength(next);
   const match = next === confirm;
+  const totpOn = !!totp.data?.enabled;
+  const backup = totp.data?.codes || [];
 
   return (
     <>
@@ -199,7 +245,50 @@ export function Account() {
 
       <section className="sect">
         <h2>
-          <span className="wrapl"><span className="snum">02</span>{t("activeSessions")}</span>
+          <span className="wrapl"><span className="snum">02</span>{t("totpSect")}</span>
+          <small>{totpOn ? t("totpOn") : t("totpOff")}</small>
+        </h2>
+        <div className="sbody">
+          <Err text={totp.error || totpError} />
+          {!totpOn && !setup && (
+            <p><button type="button" onClick={startTotp}>{t("totpEnable")}</button></p>
+          )}
+          {setup && (
+            <form onSubmit={confirmTotp}>
+              <img className="qr" alt="" src={`data:image/png;base64,${setup.qr_png}`} />
+              <p className="mono">{t("totpSecret")}: {setup.secret}</p>
+              <label htmlFor="totp-code">{t("twoFactorCode")}</label>
+              <input id="totp-code" inputMode="numeric" autoComplete="one-time-code" required value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
+              <p><button type="submit">{t("totpConfirm")}</button></p>
+            </form>
+          )}
+          {totpOn && (
+            <>
+              <p className="hint">{t("totpCodesHint")}</p>
+              <div className="codes">
+                {backup.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={c.used ? "used" : ""}
+                    disabled={c.used}
+                    onClick={() => markCode(c.id)}
+                  >{c.used ? t("totpUsed") : c.code}</button>
+                ))}
+              </div>
+              <form onSubmit={disableTotp}>
+                <label htmlFor="totp-pass">{t("totpPassword")}</label>
+                <input id="totp-pass" type="password" autoComplete="current-password" required value={totpPass} onChange={(e) => setTotpPass(e.target.value)} />
+                <p><button type="submit">{t("totpDisable")}</button></p>
+              </form>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="sect">
+        <h2>
+          <span className="wrapl"><span className="snum">03</span>{t("activeSessions")}</span>
           {rows.length > 1 && (
             <button type="button" className="btn ghost sm" onClick={revokeOthers}>{t("revokeOthers")}</button>
           )}
@@ -255,7 +344,7 @@ export function Account() {
       <section className="sect">
         <h2>
           <span className="wrapl">
-            <span className="snum">03</span>{t("recentActivity")}
+            <span className="snum">04</span>{t("recentActivity")}
             <small>{t("fromAudit")}</small>
           </span>
           <Link className="btn ghost sm" to="/audit">{t("allAudit")}</Link>
