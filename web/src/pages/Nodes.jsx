@@ -86,20 +86,20 @@ export function Nodes() {
     if (next.has(id)) next.delete(id); else next.add(id);
     setSelected(next);
   }
-  const shownSelected = list.filter((n) => selected.has(n.id)).length;
-  const allSelected = list.length > 0 && shownSelected === list.length;
+  const selNodes = nodes.filter((n) => selected.has(n.id));
+  const allSelected = list.length > 0 && list.every((n) => selected.has(n.id));
 
   // Общий хвост мутаций: очистка выделения, перечитывание, toast; ошибки — в баннер.
-  async function withMutation(run) {
+  async function withMutation(run, done = t("saved")) {
     try {
       await run();
       setSelected(new Set());
       reload();
-      toast(t("saved"));
+      toast(done);
     } catch (e) { setError(e); reload(); } // успехи до сбоя в bulk-цикле уже на сервере
   }
   function bulkEnabled(next) {
-    const targets = nodes.filter((n) => selected.has(n.id) && n.enabled !== next);
+    const targets = selNodes.filter((n) => n.enabled !== next);
     if (!targets.length) return;
     withMutation(async () => {
       for (const n of targets) {
@@ -108,18 +108,18 @@ export function Nodes() {
     });
   }
   function bulkDelete() {
-    const ids = [...selected];
+    const ids = selNodes.map((n) => n.id);
     ask(t("bulkDeleteConfirm", { n: ids.length }), () => {
       withMutation(async () => {
         for (const id of ids) await api(`/api/nodes/${id}`, { method: "DELETE" });
-      });
+      }, t("deleted"));
     });
   }
   function removeRow(n) {
     ask(t("confirmDelete", { name: n.name }), () => {
       withMutation(async () => {
         await api(`/api/nodes/${n.id}`, { method: "DELETE" });
-      });
+      }, t("deleted"));
     });
   }
   async function linkRow(n) {
@@ -154,9 +154,9 @@ export function Nodes() {
       </div>
       <Err text={error} />
 
-      {shownSelected > 0 && (
+      {selNodes.length > 0 && (
         <div className="bulkbar">
-          {t("bulkSel", { n: shownSelected })}
+          {t("bulkSel", { n: selNodes.length })}
           <button type="button" className="btn ghost sm" onClick={() => bulkEnabled(true)}>{t("toRot")}</button>
           <button type="button" className="btn ghost sm" onClick={() => bulkEnabled(false)}>{t("fromRot")}</button>
           <button type="button" className="btn ghost sm" onClick={() => bulkEnabled(false)}>{t("bulkDisable")}</button>
