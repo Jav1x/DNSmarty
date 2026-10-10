@@ -1,4 +1,4 @@
-/* Reusable widget styles: cards, toolbar, modal, toast, stepper, pager, drawer, sparkline. */
+/* Reusable widget styles: cards, toolbar, toast, stepper, drawer. Modals live in ui.css. */
 .mod {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -23,29 +23,6 @@
 .copy-box pre, .copy-box .token { flex: 1; margin: 0; }
 .copy-box pre.banner { white-space: pre-wrap; word-break: break-all; }
 
-/* Modal */
-.modal-back {
-  position: fixed; inset: 0; z-index: 40;
-  background: rgba(10, 13, 17, 0.5);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 48px var(--space-4);
-}
-/* A confirm dialog opened on top of another modal. */
-.modal-back.stacked { z-index: 50; }
-.modal {
-  width: min(760px, 100%);
-  max-height: calc(100vh - 96px);
-  overflow: auto;
-  background: var(--surface);
-  color: var(--text);
-  border-radius: var(--radius-l);
-  padding: var(--space-4) var(--space-5) var(--space-5);
-  box-shadow: var(--shadow-3);
-}
-.modal-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
-.modal-head h2 { margin: 0; font-size: var(--fs-l); }
-.modal-foot { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
-
 .stepper { display: flex; align-items: center; margin: 0 0 var(--space-4); flex-wrap: wrap; row-gap: var(--space-2); }
 .step { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: 14px; white-space: nowrap; }
 .step b {
@@ -58,10 +35,6 @@
 .step.on b, .step.done b { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .step-line { flex: 1; height: 2px; background: var(--border); margin: 0 var(--space-2); min-width: 18px; }
 .step-line.on { background: var(--accent); }
-
-/* Confirm dialog is a compact modal */
-.confirm { width: min(440px, 100%); }
-.confirm p { margin: 0 0 var(--space-4); }
 
 /* Toasts */
 .toasts {
@@ -89,7 +62,6 @@
 @media (max-width: 900px) {
   .burger { display: inline-flex; }
   .backdrop { display: block; }
-  .modal-back { padding: var(--space-4); }
 }
 @media (min-width: 901px) {
   .backdrop { display: none; }
