@@ -25,7 +25,7 @@ func TestWrongKeyRejected(t *testing.T) {
 	port := startAgent(t, ctx, key, func(body []byte) error { return nil })
 	pool := NewPool()
 	if _, err := pool.Check(context.Background(), target("a", port, other)); err == nil {
-		t.Fatal("чужой ключ прошёл")
+		t.Fatal("foreign key accepted")
 	}
 	h, err := pool.Check(context.Background(), target("b", port, key))
 	if err != nil {
@@ -52,16 +52,16 @@ func TestNoClientCertRejected(t *testing.T) {
 		resp, err := cli.Get(target("x", port, key).url(path))
 		if err == nil {
 			resp.Body.Close()
-			t.Fatalf("%s без клиентского сертификата: %s", path, resp.Status)
+			t.Fatalf("%s without client certificate: %s", path, resp.Status)
 		}
 	}
 	resp, err := cli.Post(target("x", port, key).url("/config"), "application/json", nil)
 	if err == nil {
 		resp.Body.Close()
-		t.Fatalf("/config без клиентского сертификата: %s", resp.Status)
+		t.Fatalf("/config without client certificate: %s", resp.Status)
 	}
 	if applied {
-		t.Fatal("снимок применился без авторизации")
+		t.Fatal("snapshot applied without auth")
 	}
 }
 
@@ -86,7 +86,7 @@ func TestForeignPanelCertRejected(t *testing.T) {
 	resp, err := cli.Get(target("x", port, key).url("/health"))
 	if err == nil {
 		resp.Body.Close()
-		t.Fatalf("чужой сертификат панели прошёл: %s", resp.Status)
+		t.Fatalf("foreign panel certificate accepted: %s", resp.Status)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestTLS12Rejected(t *testing.T) {
 	conn, err := tls.Dial("tcp", target("x", port, key).addr(), cfg)
 	if err == nil {
 		conn.Close()
-		t.Fatal("TLS 1.2 принят")
+		t.Fatal("TLS 1.2 accepted")
 	}
 }
 
@@ -133,7 +133,7 @@ func TestPushAppliesSnapshot(t *testing.T) {
 	}
 	snap := eng.Snapshot()
 	if snap == nil || len(snap.Domains) != 1 || snap.Domains[0].Proxies[0].IPv4 != "203.0.113.10" {
-		t.Fatalf("снимок не применился: %+v", snap)
+		t.Fatalf("snapshot not applied: %+v", snap)
 	}
 }
 
@@ -153,10 +153,10 @@ func TestStaleVersionRejected(t *testing.T) {
 	}
 	err := push("e1", 4, true)
 	if have, ok := IsStale(err); !ok || have != 5 {
-		t.Fatalf("старая версия принята или ошибка не та: %v", err)
+		t.Fatalf("old version accepted or wrong error: %v", err)
 	}
 	if eng.Snapshot().Version != 5 {
-		t.Fatalf("версия откатилась: %d", eng.Snapshot().Version)
+		t.Fatalf("version rolled back: %d", eng.Snapshot().Version)
 	}
 	// The same version is applied again, because node_enabled lives outside the version.
 	if err := push("e1", 5, false); err != nil {
@@ -164,14 +164,14 @@ func TestStaleVersionRejected(t *testing.T) {
 	}
 	q := testQuery()
 	if resp := eng.Resolve(netip.MustParseAddr("127.0.0.1"), q); resp.Rcode == 0 {
-		t.Fatal("выключенный узел ответил")
+		t.Fatal("disabled node answered")
 	}
 	// A new epoch restarts numbering.
 	if err := push("e2", 1, true); err != nil {
-		t.Fatalf("новая эпоха отвергнута: %v", err)
+		t.Fatalf("new epoch rejected: %v", err)
 	}
 	if eng.Snapshot().Epoch != "e2" || eng.Snapshot().Version != 1 {
-		t.Fatalf("снимок: %+v", eng.Snapshot())
+		t.Fatalf("snapshot: %+v", eng.Snapshot())
 	}
 }
 
@@ -192,7 +192,7 @@ func TestPoolReusesConn(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reused {
-		t.Fatal("соединение не переиспользовано")
+		t.Fatal("connection not reused")
 	}
 }
 
@@ -227,7 +227,7 @@ func TestClosedPort(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
 	if _, err := NewPool().Check(context.Background(), target("n", port, key)); err == nil {
-		t.Fatal("закрытый порт не дал ошибку")
+		t.Fatal("closed port returned no error")
 	}
 }
 

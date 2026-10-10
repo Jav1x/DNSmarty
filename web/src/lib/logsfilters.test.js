@@ -12,6 +12,7 @@ import {
   auditGroup,
   auditDetail,
   mergeById,
+  sortRows,
 } from "./logsfilters";
 
 describe("normDomainInput", () => {
@@ -186,6 +187,27 @@ describe("auditGroup", () => {
     expect(auditGroup("acl.create")).toBe("acl");
   });
   it("unknown action — other", () => expect(auditGroup("mystery")).toBe("other"));
+  it("oauth family", () => {
+    expect(auditGroup("oauth.link")).toBe("oauth");
+    expect(auditGroup("oauth.save")).toBe("oauth");
+  });
+  it("maps nearby prefixes onto existing pills", () => {
+    expect(auditGroup("totp.enable")).toBe("login");
+    expect(auditGroup("client.create")).toBe("acl");
+    expect(auditGroup("template.create")).toBe("service");
+  });
+});
+
+describe("sortRows", () => {
+  const rows = [
+    { name: "b.com", latency_ms: 12 },
+    { name: "a.com", latency_ms: 4 },
+    { name: "c.com", latency_ms: null },
+  ];
+  it("sorts strings ascending", () =>
+    expect(sortRows(rows, "name", "asc").map((r) => r.name)).toEqual(["a.com", "b.com", "c.com"]));
+  it("sorts numbers descending and parks nulls last", () =>
+    expect(sortRows(rows, "latency_ms", "desc").map((r) => r.latency_ms)).toEqual([12, 4, null]));
 });
 
 describe("auditDetail", () => {
@@ -201,7 +223,7 @@ describe("auditDetail", () => {
     expect(auditDetail("logout", "")).toEqual([]);
   });
   it("unparseable detail falls back to the raw text", () =>
-    expect(auditDetail("login", "не json")).toEqual([{ k: "raw", v: "не json" }]));
+    expect(auditDetail("login", "not json")).toEqual([{ k: "raw", v: "not json" }]));
 });
 
 describe("mergeById", () => {

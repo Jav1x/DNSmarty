@@ -1,36 +1,29 @@
-// Аккаунт (лаба 14, фаза 1): профиль-банд, 01 смена пароля с живым индикатором
-// надёжности (4 сегмента + слово, проверка совпадения на лету), 02 активные
-// сессии, 03 недавняя активность (аудит этого пользователя). 2FA и OAuth в фазе 1
-// не рендерятся — вернутся вместе с бэкендом (фаза 2) и сдвинут номера.
-//
-// Контракт (проверен по internal/panel/api.go и store/admin.go):
-//   GET  /api/me                       → { user, csrf, session_id, version } — роли в ответе нет;
-//   POST /api/password                 → {current, next}; бэкенд завершает прочие
-//                                        сессии (store.ChangePassword) — перечитываем список;
-//   GET  /api/sessions                 → [{id, created_at, last_seen_at, expires_at,
-//                                          ip, user_agent, current}];
-//   POST /api/sessions/revoke-others   → {ok, revoked};
-//   DELETE /api/sessions/{id}          → {ok};
-//   GET  /api/audit                    → {rows:[{id, at, actor, action, detail}], next} —
-//                                        фильтра по пользователю на сервере нет, отбираем
-//                                        на клиенте (actor === user из /api/me).
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useLoad } from "../hooks/useLoad";
 import { useI18n } from "../i18n";
 import { EmptyRow, Err, SkeletonRows } from "../components/Bits";
 import { useConfirm, useToast } from "../components/Toast";
+import { Modal } from "../ui/Modal";
 import { auditDetail } from "../lib/logsfilters";
+import Lamp from "../ui/Lamp";
 import { ago, deviceIcon, pwStrength } from "../lib/util";
 
-// Слова надёжности по сегментам (лаба 14): 1 слабый · 2 посредственный ·
-// 3 хороший · 4 отличный; пустое поле — «минимум 12 символов».
 const PW_WORDS = ["", "pwWeak", "pwFair", "pwGood", "pwGreat"];
+const OAUTH_ERR = {
+  unlinked: "oauthErrUnlinked",
+  denied: "oauthErrDenied",
+  bad_state: "oauthErrState",
+  failed: "oauthErrFailed",
+};
+const OAUTH_NAME = {
+  google: "oauthNameGoogle",
+  github: "oauthNameGitHub",
+  yandex: "oauthNameYandex",
+};
 const SHORT_DATE = { dateStyle: "short", timeStyle: "short" };
 
-// Человеческое имя действия аудита; незнакомые действия — как есть (фаза 1
-// знает login/login.fail/logout/node.check, см. logsfilters.auditGroup).
 const ACT_KEYS = {
   "login": "actLogin",
   "login.fail": "actLoginFail",
@@ -38,14 +31,105 @@ const ACT_KEYS = {
   "node.check": "actNodeCheck",
   "session.revoke": "actSessionRevoke",
   "password.change": "actPasswordChange",
+  "totp.enable": "actTotpEnable",
+  "totp.disable": "actTotpDisable",
 };
 
-// Лампа-точка строки активности: вход — зелёная, отказ входа — красная,
-// прочее — синяя (лаба 14).
 function actDot(action) {
   if (action === "login") return "ok";
   if (action === "login.fail") return "bad";
   return "info";
+}
+
+function TotpModal({
+  enroll, step, setStep, setup, code, setCode, password, setPassword,
+  codes, copied, error, onCopy, onCopyCodes, onConfirm, onDisable, onClose, t,
+}) {
+  const labels = [t("totpStepKey"), t("totpStepCode"), t("totpStepCodes")];
+  const showKey = enroll && step === 0;
+  const showCode = enroll && step === 1;
+  const showTickets = enroll && step === 2;
+  const showOff = !enroll;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={560}
+      title={t("totpSect")}
+      note={<span className="dirty">{enroll ? labels[step] : t("totpStepOff")}</span>}
+      footer={(
+        <>
+          {!showTickets && <button type="button" className="btn ghost" onClick={onClose}>{t("cancel")}</button>}
+          {showTickets && <button type="button" className="btn" onClick={onClose}>{t("totpDone")}</button>}
+          {showKey && <button type="button" className="btn" onClick={() => setStep(1)}>{t("next")} →</button>}
+          {showCode && <button type="submit" form="totp-confirm" className="btn">{t("totpConfirm")}</button>}
+          {showOff && <button type="submit" form="totp-off" className="btn danger">{t("totpDisable")}</button>}
+        </>
+      )}
+    >
+      {enroll && (
+        <div className="stepper">
+          {labels.map((label, i) => (
+            <span className="stepwrap" key={label}>
+              {i > 0 && <span className="starrow" aria-hidden="true">→</span>}
+              <span className={`step${i === step ? " on" : i < step ? " done" : ""}`}>
+                <span className="n">{i < step ? "✓" : i + 1}</span>{label}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+      {showKey && setup && (
+        <div className="qrplate">
+          <img alt="" src={`data:image/png;base64,${setup.qr_png}`} />
+          <p className="hint">{t("totpScanHint")}</p>
+          <div className="tok nn-tok">
+            <span>{setup.secret}</span>
+            <button type="button" className="copybtn" onClick={onCopy}>{copied ? t("copied") : t("copy")}</button>
+          </div>
+        </div>
+      )}
+      {showCode && (
+        <form id="totp-confirm" className="code-step" onSubmit={onConfirm}>
+          <Err text={error} />
+          <label htmlFor="totp-code">{t("twoFactorCode")}</label>
+          <input
+            id="totp-code"
+            className="codewell"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            autoFocus
+            maxLength={8}
+            required
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+          <p className="hint">{t("twoFactorHint")}</p>
+        </form>
+      )}
+      {showTickets && (
+        <div className="ticket-step">
+          <p className="hint">{t("totpCodesHint")}</p>
+          <div className="tickets">
+            {(codes || []).map((c, i) => (
+              <div key={i} className="ticket">{c}</div>
+            ))}
+          </div>
+          <button type="button" className="copybtn" onClick={onCopyCodes}>{copied ? t("copied") : t("copy")}</button>
+        </div>
+      )}
+      {showOff && (
+        <form id="totp-off" className="code-step" onSubmit={onDisable}>
+          <Err text={error} />
+          <div className="f">
+            <label htmlFor="totp-pass">{t("totpPassword")}</label>
+            <input id="totp-pass" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <p className="hint">{t("totpOffHint")}</p>
+        </form>
+      )}
+    </Modal>
+  );
 }
 
 export function Account() {
@@ -60,11 +144,21 @@ export function Account() {
   const [pwdError, setPwdError] = useState("");
   const [ask, confirmRow] = useConfirm();
   const toast = useToast();
+  const totp = useLoad("/api/account/2fa/codes");
+  const oauth = useLoad("/api/account/oauth");
+  const [params] = useSearchParams();
+  const [setup, setSetup] = useState(null);
+  const [totpOpen, setTotpOpen] = useState(false);
+  const [totpStep, setTotpStep] = useState(0);
+  const [freshCodes, setFreshCodes] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [totpCode, setTotpCode] = useState("");
+  const [totpError, setTotpError] = useState("");
+  const [totpPass, setTotpPass] = useState("");
 
   const user = me.data?.user;
   const rows = data || [];
-  // Аудит «по этому пользователю»: сервер фильтров не принимает — отбираем
-  // по актёру на клиенте; последние 8 строк достаточно для лабовой секции.
+
   const activity = (audit.data?.rows || [])
     .filter((r) => user && r.actor === user)
     .slice(0, 8);
@@ -107,8 +201,87 @@ export function Account() {
     });
   }
 
+  function closeTotp() {
+    setTotpOpen(false);
+    setSetup(null);
+    setFreshCodes(null);
+    setTotpStep(0);
+    setTotpCode("");
+    setTotpPass("");
+    setCopied(false);
+    setTotpError("");
+  }
+
+  async function startTotp() {
+    setTotpError("");
+    try {
+      setSetup(await api("/api/account/2fa/setup", { method: "POST", body: "{}" }));
+      setTotpCode("");
+      setFreshCodes(null);
+      setTotpStep(0);
+      setTotpOpen(true);
+    } catch (e) { setTotpError(e); }
+  }
+
+  function openTotp() {
+    setSetup(null);
+    setFreshCodes(null);
+    setTotpStep(0);
+    setTotpError("");
+    setTotpOpen(true);
+  }
+
+  async function confirmTotp(event) {
+    event.preventDefault();
+    setTotpError("");
+    try {
+      const out = await api("/api/account/2fa/enable", { method: "POST", body: JSON.stringify({ code: totpCode }) });
+      setCopied(false);
+      setFreshCodes(out.codes || []);
+      setTotpStep(2);
+      totp.reload();
+      audit.reload();
+    } catch (e) { setTotpError(e); }
+  }
+
+  async function copySecret() {
+    try {
+      await navigator.clipboard.writeText(setup.secret);
+      setCopied(true);
+    } catch (e) { setTotpError(e); }
+  }
+
+  async function disableTotp(event) {
+    event.preventDefault();
+    setTotpError("");
+    try {
+      await api("/api/account/2fa/disable", { method: "POST", body: JSON.stringify({ password: totpPass }) });
+      setTotpPass("");
+      totp.reload();
+      audit.reload();
+      closeTotp();
+    } catch (e) { setTotpError(e); }
+  }
+
+  async function copyCodes() {
+    try {
+      await navigator.clipboard.writeText((freshCodes || []).join("\n"));
+      setCopied(true);
+    } catch (e) { setTotpError(e); }
+  }
+
+  function unlinkOAuth(id) {
+    ask(t("oauthUnlinkAsk"), async () => {
+      try {
+        await api(`/api/account/oauth/${id}`, { method: "DELETE" });
+        oauth.reload();
+      } catch (e) { oauth.setError(e); }
+    });
+  }
+
   const score = pwStrength(next);
   const match = next === confirm;
+  const totpOn = !!totp.data?.enabled;
 
   return (
     <>
@@ -123,7 +296,7 @@ export function Account() {
           <span className="avatar" aria-hidden="true">{(me.data.user || "?").slice(0, 2).toUpperCase()}</span>
           <span className="who">
             <b>{me.data.user}</b>
-            <span>{t("panelVer", { v: me.data.version || "—" })}</span>
+            <span>{t("roleAdmin")} · {t("panelVer", { v: me.data.version || "—" })}</span>
           </span>
           <span className="hstats">
             <span className="hstat"><b>{rows.length}</b><span>{t("sessionsLive")}</span></span>
@@ -192,14 +365,74 @@ export function Account() {
                 </div>
               </div>
             </div>
-            <p><button type="submit">{t("save")}</button></p>
+            <p><button type="submit" className="btn">{t("save")}</button></p>
           </form>
         </div>
       </section>
 
       <section className="sect">
         <h2>
-          <span className="wrapl"><span className="snum">02</span>{t("activeSessions")}</span>
+          <span className="wrapl"><span className="snum">02</span>{t("totpSect")}</span>
+          <small>{totpOn ? t("totpOn") : t("totpOff")}</small>
+        </h2>
+        <div className="sbody totp-status">
+          <Err text={totp.error || (!totpOpen && totpError)} />
+          <Lamp state={totpOn ? "on" : "dis"} tip={totpOn ? t("totpOn") : t("totpOff")} />
+          <p>{totpOn ? t("totpOn") : t("totpOff")}</p>
+          {totpOn
+            ? <button type="button" className="btn danger" onClick={openTotp}>{t("totpDisable")}</button>
+            : <button type="button" className="btn" onClick={startTotp}>{t("totpEnable")}</button>}
+        </div>
+      </section>
+      {totpOpen && (
+        <TotpModal
+          enroll={!!setup}
+          step={totpStep}
+          setStep={setTotpStep}
+          setup={setup}
+          code={totpCode}
+          setCode={setTotpCode}
+          password={totpPass}
+          setPassword={setTotpPass}
+          codes={freshCodes || []}
+          copied={copied}
+          error={totpError}
+          onCopy={copySecret}
+          onCopyCodes={copyCodes}
+          onConfirm={confirmTotp}
+          onDisable={disableTotp}
+          onClose={closeTotp}
+          t={t}
+        />
+      )}
+
+      <section className="sect">
+        <h2>
+          <span className="wrapl"><span className="snum">03</span>{t("oauthAccount")}</span>
+          <small>{t("oauthAccountSub")}</small>
+        </h2>
+        <div className="sbody">
+          <Err text={oauth.error} />
+          {OAUTH_ERR[params.get("oauth")] && <div className="banner err">{t(OAUTH_ERR[params.get("oauth")])}</div>}
+          {(oauth.data?.providers || []).map((p) => (
+            <div className="oauth-acc" key={p.id}>
+              <b>{t(OAUTH_NAME[p.id] || p.name)}</b>
+              <span className={p.linked && p.display_name ? "nm" : undefined}>
+                {p.linked ? (p.display_name || t("oauthLinked")) : t("oauthNotLinked")}
+              </span>
+              {p.linked
+                ? <button type="button" className="btn ghost sm" onClick={() => unlinkOAuth(p.id)}>{t("oauthUnlink")}</button>
+                : p.ready
+                  ? <a className="btn sm" href={`/api/account/oauth/${p.id}/link`}>{t("oauthLink")}</a>
+                  : <span className="hint">{t("oauthNeedSettings")}</span>}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="sect">
+        <h2>
+          <span className="wrapl"><span className="snum">04</span>{t("activeSessions")}</span>
           {rows.length > 1 && (
             <button type="button" className="btn ghost sm" onClick={revokeOthers}>{t("revokeOthers")}</button>
           )}
@@ -255,15 +488,14 @@ export function Account() {
       <section className="sect">
         <h2>
           <span className="wrapl">
-            <span className="snum">03</span>{t("recentActivity")}
+            <span className="snum">05</span>{t("recentActivity")}
             <small>{t("fromAudit")}</small>
           </span>
           <Link className="btn ghost sm" to="/audit">{t("allAudit")}</Link>
         </h2>
         <div className="sbody audit">
           <Err text={audit.error} />
-          {/* Пока /api/audit грузится, строк не рисуем: «нет данных» показываем
-              только после ответа — иначе первая секунда выглядит ошибкой. */}
+
           {!audit.loading && audit.data && !activity.length && <div className="hint">{t("noData")}</div>}
           {activity.map((r) => {
             const pairs = auditDetail(r.action, r.detail);

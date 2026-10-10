@@ -1,13 +1,3 @@
-// Аудит (лаба 16): поиск по действию/актёру/деталям, пилюли типов, цветные
-// чипы действий (login — янтарь, login.fail — красный с подсветкой строки),
-// человекочитаемые детали. Keyset-пагинация — как сейчас на бэкенде.
-//
-// Контракт (проверен по internal/panel/api.go s.auditLog и admin.go):
-//   GET /api/audit?before=&before_id= → { rows, next }  (без параметров фильтра)
-//   row: { id, at, actor, action, detail } — detail::text, JSON.
-//   Действия фазы 1: login {ip}, login.fail {ip}, logout {}, node.check {id, ok}.
-//   Поиск и пилюли типов фильтруются на клиенте (сервер фильтров не принимает);
-//   колонки «Источник» (IP) в контракте нет — IP приходит в детали login*.
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
@@ -21,21 +11,19 @@ const GROUPS = [
   ["service", "groupService"],
   ["settings", "groupSettings"],
   ["acl", "groupAcl"],
+  ["oauth", "groupOAuth"],
   ["other", "groupOther"],
 ];
 
-// Класс чипа действия (лаба 16): login/login.fail/node/session/domain, прочие —
-// нейтральная рамка.
 function actClass(action) {
   if (action === "login.fail") return "act login fail";
   const prefix = action.split(".")[0];
-  if (["login", "node", "session"].includes(prefix)) return `act ${prefix}`;
-  if (prefix === "service" || prefix === "domain") return "act domain";
+  if (["login", "node", "session", "oauth"].includes(prefix)) return `act ${prefix}`;
+  if (prefix === "service" || prefix === "domain" || prefix === "template") return "act domain";
+  if (prefix === "totp" || prefix === "password") return "act login";
   return "act";
 }
 
-// Детали human-readable: пары {k, v} из auditDetail переводятся ключами
-// detIp/detId/detNodeOk/detNodeFail; незнакомые ключи и raw — как есть.
 function Detail({ pairs }) {
   const { t } = useI18n();
   if (!pairs.length) return <span className="muted">{t("dash")}</span>;
@@ -65,14 +53,9 @@ export function Audit() {
   const [next, setNext] = useState(null);
   const [error, setError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
-  // moreRef — идёт ли «Загрузить ещё» (защита от двойного клика до ре-рендера);
-  // mountedRef — не применять ответ после размонтирования.
   const moreRef = useRef(false);
   const mountedRef = useRef(false);
 
-  // Первая страница — только при монтировании. Фильтров на сервере нет, поэтому
-  // смены запроса, кроме «Загрузить ещё», не бывает. live-флаг гасит ответ
-  // размонтированного компонента; таймеров здесь нет.
   useEffect(() => {
     let live = true;
     mountedRef.current = true;
@@ -112,7 +95,6 @@ export function Audit() {
   }
 
   const needle = search.trim().toLowerCase();
-  // Пилюли типов — только реально присутствующие в загруженных строках группы.
   const present = GROUPS.filter(([g]) => (rows || []).some((r) => auditGroup(r.action) === g));
   const visible = (rows || []).filter((r) =>
     (!group || auditGroup(r.action) === group)

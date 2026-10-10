@@ -318,6 +318,9 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
+	if err := s.fillNodeTraffic(ctx, o.Nodes); err != nil {
+		return Overview{}, err
+	}
 	for _, n := range o.Nodes {
 		if n.Role == snapshot.RoleProxy {
 			o.BayProxies = append(o.BayProxies, n)
@@ -326,15 +329,15 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	if o.BayProxies == nil {
 		o.BayProxies = []Node{}
 	}
-	domains, err := s.ListDomains(ctx)
+	services, err := s.ListServices(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
-	for _, d := range domains {
-		row := BayRow{Name: d.Name, Balance: d.Balance, Enabled: d.Enabled, Cells: []BayCell{}}
+	for _, svc := range services {
+		row := BayRow{Name: svc.Name, Balance: svc.Strategy, Enabled: svc.Enabled, Cells: []BayCell{}}
 		for _, p := range o.BayProxies {
 			state := "empty"
-			for _, w := range d.Weights {
+			for _, w := range svc.Proxies {
 				if w.ProxyID == p.ID && w.On {
 					state = "dead"
 					if p.Fresh && (p.PublicIPv4 != "" || p.PublicIPv6 != "") {
@@ -351,6 +354,67 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 		o.Rows = []BayRow{}
 	}
 	return o, nil
+}
+
+func (s *Store) fillNodeTraffic(ctx context.Context, nodes []Node) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	q := map[string]int64{}
+	rows, err := s.pool.Query(ctx, `
+		SELECT node_id::text, count(*) FROM dns_hit
+		WHERE at > now() - interval '24 hours' GROUP BY 1
+	`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		var n int64
+		if err := rows.Scan(&id, &n); err != nil {
+			rows.Close()
+			return err
+		}
+		q[id] = n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	b := map[string]int64{}
+	sess := map[string]int64{}
+	rows, err = s.pool.Query(ctx, `
+		SELECT node_id::text, count(*), coalesce(sum(bytes_up + bytes_down), 0)
+		FROM proxy_session
+		WHERE at > now() - interval '24 hours' GROUP BY 1
+	`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		var n, bytes int64
+		if err := rows.Scan(&id, &n, &bytes); err != nil {
+			rows.Close()
+			return err
+		}
+		sess[id] = n
+		b[id] = bytes
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range nodes {
+		nodes[i].Queries24 = q[nodes[i].ID]
+		nodes[i].Sessions24 = sess[nodes[i].ID]
+		nodes[i].Bytes24 = b[nodes[i].ID]
+	}
+	return nil
+}
+
+func (s *Store) FillNodeTraffic(ctx context.Context, nodes []Node) error {
+	return s.fillNodeTraffic(ctx, nodes)
 }
 
 func (s *Store) DNSLogs(ctx context.Context, name, ip, decision string, p Page) ([]DNSLog, *Cursor, error) {

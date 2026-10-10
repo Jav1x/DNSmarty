@@ -11,7 +11,7 @@ func TestACLOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !acl.Allowed(netip.MustParseAddr("8.8.8.8")) {
-		t.Fatal("пустой allow отказал")
+		t.Fatal("empty allow refused")
 	}
 }
 
@@ -21,10 +21,10 @@ func TestACLBootstrapOverridesDeny(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !acl.Allowed(netip.MustParseAddr("10.1.2.3")) {
-		t.Fatal("bootstrap не перекрыл deny")
+		t.Fatal("bootstrap did not override deny")
 	}
 	if acl.Allowed(netip.MustParseAddr("10.1.2.4")) {
-		t.Fatal("deny не сработал")
+		t.Fatal("deny did not match")
 	}
 }
 
@@ -34,10 +34,10 @@ func TestACLDenyOverridesAllow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if acl.Allowed(netip.MustParseAddr("192.0.2.1")) {
-		t.Fatal("deny не перекрыл allow")
+		t.Fatal("deny did not override allow")
 	}
 	if !acl.Allowed(netip.MustParseAddr("8.8.8.8")) {
-		t.Fatal("allow не пропустил")
+		t.Fatal("allow did not pass")
 	}
 }
 
@@ -47,15 +47,15 @@ func TestACLWhitelist(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !acl.Allowed(netip.MustParseAddr("203.0.113.50")) {
-		t.Fatal("в whitelist отказано")
+		t.Fatal("inside whitelist refused")
 	}
 	if acl.Allowed(netip.MustParseAddr("198.51.100.1")) {
-		t.Fatal("вне whitelist пропущено")
+		t.Fatal("outside whitelist allowed")
 	}
 }
 
 func TestACLInvalid(t *testing.T) {
 	if _, err := CompileACL([]string{"not-a-cidr"}, nil, nil); err == nil {
-		t.Fatal("битный CIDR принят")
+		t.Fatal("malformed CIDR accepted")
 	}
 }

@@ -83,13 +83,13 @@ func TestReadJSON(t *testing.T) {
 		t.Errorf("text/plain: %d", c)
 	}
 	if c := try("application/json", `{"name":"a","admin":true}`); c != http.StatusBadRequest {
-		t.Errorf("лишнее поле: %d", c)
+		t.Errorf("extra field: %d", c)
 	}
 	if c := try("application/json", `{"name":"a"}{"name":"b"}`); c != http.StatusBadRequest {
-		t.Errorf("два объекта: %d", c)
+		t.Errorf("two objects: %d", c)
 	}
 	if c := try("application/json; charset=utf-8", `{"name":"a"}`); c != http.StatusOK {
-		t.Errorf("корректный: %d", c)
+		t.Errorf("valid: %d", c)
 	}
 }
 
@@ -99,27 +99,27 @@ func TestLoginLimiter(t *testing.T) {
 	l.now = func() time.Time { return now }
 	for i := 0; i < 5; i++ {
 		if l.blocked("192.0.2.1", "admin") > 0 {
-			t.Fatalf("заблокирован после %d", i)
+			t.Fatalf("blocked after %d", i)
 		}
 		l.fail("192.0.2.1", "admin")
 	}
 	if l.blocked("192.0.2.1", "admin") == 0 {
-		t.Fatal("шестая попытка разрешена")
+		t.Fatal("sixth attempt allowed")
 	}
 	// Another address may still try the same user until the per-user limit.
 	if l.blocked("192.0.2.2", "admin") > 0 {
-		t.Fatal("чужой IP заблокирован лимитом по адресу")
+		t.Fatal("other IP blocked by address limit")
 	}
 	now = now.Add(15*time.Minute + time.Second)
 	if l.blocked("192.0.2.1", "admin") > 0 {
-		t.Fatal("окно не истекло")
+		t.Fatal("window did not expire")
 	}
 	// Per-user limit across many addresses.
 	for i := 0; i < 20; i++ {
 		l.fail(netip.AddrFrom4([4]byte{198, 51, 100, byte(i)}).String(), "Admin")
 	}
 	if l.blocked("203.0.113.9", "admin") == 0 {
-		t.Fatal("лимит по логину не сработал")
+		t.Fatal("login limit did not fire")
 	}
 }
 
@@ -134,7 +134,7 @@ func TestSecureHeaders(t *testing.T) {
 		}
 		for _, name := range []string{"Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security"} {
 			if w.Header().Get(name) == "" {
-				t.Errorf("%s: нет %s", path, name)
+				t.Errorf("%s: missing %s", path, name)
 			}
 		}
 	}

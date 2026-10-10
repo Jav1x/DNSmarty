@@ -91,7 +91,7 @@ func (e *Engine) Snapshot() *snapshot.DNS {
 // and the previous one stays, instead of failing every query.
 func (e *Engine) SetSnapshot(s *snapshot.DNS) error {
 	if s == nil {
-		return errors.New("пустой снимок")
+		return errors.New("empty snapshot")
 	}
 	cp := *s
 	c, err := Compile(&cp)
@@ -363,7 +363,7 @@ func hinfoReply(req *mdns.Msg, ttl uint32) *mdns.Msg {
 	return m
 }
 
-var errBusy = errors.New("слишком много запросов к upstream")
+var errBusy = errors.New("too many upstream requests")
 
 func (e *Engine) forward(req *mdns.Msg, upstreams []string) (*mdns.Msg, error) {
 	select {
@@ -383,7 +383,7 @@ func (e *Engine) forward(req *mdns.Msg, upstreams []string) (*mdns.Msg, error) {
 			continue
 		}
 		if r == nil || !sameQuestion(q, r) {
-			last = errors.New("upstream ответил не на тот вопрос")
+			last = errors.New("upstream answered a different question")
 			continue
 		}
 		r.Id = req.Id
@@ -448,7 +448,8 @@ func (e *Engine) exchangeDoH(q *mdns.Msg, endpoint string) (*mdns.Msg, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := e.doh.Post(endpoint, "application/dns-message", bytes.NewReader(wire))
+	// Client Timeout bounds the call; the UDP/DoT path has no request context to thread.
+	resp, err := e.doh.Post(endpoint, "application/dns-message", bytes.NewReader(wire)) //nolint:noctx
 	if err != nil {
 		return nil, err
 	}

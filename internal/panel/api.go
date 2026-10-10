@@ -22,7 +22,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// apiError is every error body. code is stable for the UI; error is a Russian message kept for
+// apiError is every error body. code is stable for the UI; error is English for
 // older clients; field names the invalid input when code is "invalid".
 type apiError struct {
 	Error string `json:"error"`
@@ -39,14 +39,14 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, store.ErrInvalid):
 		field := strings.TrimSpace(strings.TrimPrefix(err.Error(), store.ErrInvalid.Error()+":"))
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "Проверьте поле: " + field, Code: "invalid", Field: field})
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "Check the field: " + field, Code: "invalid", Field: field})
 	case errors.Is(err, store.ErrConflict):
-		writeErr(w, http.StatusConflict, "conflict", "Такая запись уже есть.")
+		writeErr(w, http.StatusConflict, "conflict", "That record already exists.")
 	case errors.Is(err, store.ErrNotFound):
-		writeErr(w, http.StatusNotFound, "not_found", "Запись не найдена.")
+		writeErr(w, http.StatusNotFound, "not_found", "Record not found.")
 	default:
 		s.log.Error("api", "id", requestID(r.Context()), "path", r.URL.Path, "err", err)
-		writeErr(w, http.StatusInternalServerError, "internal", "Не удалось сохранить.")
+		writeErr(w, http.StatusInternalServerError, "internal", "Could not save.")
 	}
 }
 
@@ -54,13 +54,13 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 // Requiring application/json also keeps plain HTML forms from other sites out.
 func readJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
-		writeErr(w, http.StatusUnsupportedMediaType, "content_type", "Нужен Content-Type: application/json.")
+		writeErr(w, http.StatusUnsupportedMediaType, "content_type", "Content-Type must be application/json.")
 		return false
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil || dec.More() {
-		writeErr(w, http.StatusBadRequest, "bad_json", "некорректный JSON")
+		writeErr(w, http.StatusBadRequest, "bad_json", "Invalid JSON.")
 		return false
 	}
 	return true
@@ -68,7 +68,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
-		writeErr(w, http.StatusForbidden, "csrf", "Запрос отклонён: обновите страницу.")
+		writeErr(w, http.StatusForbidden, "csrf", "Request rejected: reload the page.")
 		return
 	}
 	var body struct {
@@ -82,26 +82,42 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r).String()
 	if wait := s.limiter.blocked(ip, user); wait > 0 {
 		w.Header().Set("Retry-After", retryAfter(wait))
-		writeErr(w, http.StatusTooManyRequests, "rate_limited", "Слишком много попыток. Попробуйте позже.")
+		writeErr(w, http.StatusTooManyRequests, "rate_limited", "Too many attempts. Try again later.")
 		return
 	}
 	id, ok, err := s.store.Authenticate(r.Context(), user, body.Password)
 	if err != nil {
 		s.log.Error("login", "err", err)
-		writeErr(w, http.StatusInternalServerError, "internal", "Панель не смогла проверить пароль.")
+		writeErr(w, http.StatusInternalServerError, "internal", "The panel could not check the password.")
 		return
 	}
 	if !ok {
 		s.limiter.fail(ip, user)
 		s.audit(r, clip(user, 64), "login.fail", map[string]string{"ip": ip})
-		writeErr(w, http.StatusUnauthorized, "bad_credentials", "Неверный логин или пароль.")
+		writeErr(w, http.StatusUnauthorized, "bad_credentials", "Wrong username or password.")
 		return
 	}
 	s.limiter.success(ip)
+	totpOn, err := s.store.TOTPEnabled(r.Context(), id)
+	if err != nil {
+		s.log.Error("login", "err", err)
+		writeErr(w, http.StatusInternalServerError, "internal", "The panel could not check the password.")
+		return
+	}
+	if totpOn {
+		ticket, err := s.store.IssueLoginTicket(r.Context(), id)
+		if err != nil {
+			s.log.Error("login", "err", err)
+			writeErr(w, http.StatusInternalServerError, "internal", "Session was not created.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"totp_required": true, "ticket": ticket})
+		return
+	}
 	cookie, csrf, err := s.store.CreateSession(r.Context(), id, ip, r.UserAgent())
 	if err != nil {
 		s.log.Error("session", "err", err)
-		writeErr(w, http.StatusInternalServerError, "internal", "Сессия не создана.")
+		writeErr(w, http.StatusInternalServerError, "internal", "Session was not created.")
 		return
 	}
 	s.audit(r, user, "login", map[string]string{"ip": ip})
@@ -138,10 +154,10 @@ func (s *Server) passwordChange(w http.ResponseWriter, r *http.Request) {
 	err := s.store.ChangePassword(r.Context(), sess, body.Current, body.Next)
 	switch {
 	case errors.Is(err, store.ErrWrongPassword):
-		writeErr(w, http.StatusBadRequest, "wrong_password", "Текущий пароль неверен.")
+		writeErr(w, http.StatusBadRequest, "wrong_password", "The current password is wrong.")
 	case errors.Is(err, store.ErrWeakPassword):
 		writeErr(w, http.StatusBadRequest, "weak_password",
-			fmt.Sprintf("Новый пароль: от %d до %d байт и не равен текущему.", store.MinPassword, store.MaxPassword))
+			fmt.Sprintf("New password: %d to %d bytes, different from the current one.", store.MinPassword, store.MaxPassword))
 	case err != nil:
 		s.fail(w, r, err)
 	default:
@@ -196,7 +212,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	o, err := s.store.Overview(r.Context())
 	if err != nil {
 		s.log.Error("overview", "err", err)
-		writeErr(w, http.StatusInternalServerError, "internal", "Сводка не собралась.")
+		writeErr(w, http.StatusInternalServerError, "internal", "The overview could not be loaded.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"overview": o, "nodes": o.Nodes})
@@ -205,7 +221,11 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.ListNodes(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Список узлов не прочитан.")
+		writeErr(w, http.StatusInternalServerError, "internal", "The node list could not be read.")
+		return
+	}
+	if err := s.store.FillNodeTraffic(r.Context(), rows); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", "The node list could not be read.")
 		return
 	}
 	st, _ := s.store.Settings(r.Context())
@@ -216,6 +236,21 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 		out[i] = nodeView{Node: n, NeedsUpdate: nu, LiveWindowSec: window}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) nodesReorder(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	var in struct {
+		IDs []string `json:"ids"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.store.ReorderNodes(r.Context(), sess.Username, in.IDs); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) nodesCreate(w http.ResponseWriter, r *http.Request) {
@@ -283,66 +318,33 @@ func (s *Server) nodesConnect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *Server) domains(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.ListDomains(r.Context())
+type serviceBody struct {
+	store.ServiceInput
+	Members []store.MemberInput `json:"members"`
+}
+
+func (s *Server) services(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListServices(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Список доменов не прочитан.")
+		writeErr(w, http.StatusInternalServerError, "internal", "The service list could not be read.")
 		return
 	}
 	nodes, _ := s.store.ListNodes(r.Context())
-	groups, err := s.store.ListGroups(r.Context())
+	templates, err := s.store.ListTemplates(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Список доменов не прочитан.")
+		writeErr(w, http.StatusInternalServerError, "internal", "The service list could not be read.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"domains": rows, "proxies": proxyOnly(nodes), "groups": groups})
+	writeJSON(w, http.StatusOK, map[string]any{"services": list, "proxies": proxyOnly(nodes), "templates": templates})
 }
 
-func (s *Server) domainsCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) servicesCreate(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r.Context())
-	var in store.DomainInput
+	var in serviceBody
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if err := s.store.CreateDomain(r.Context(), sess.Username, in); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) domainsUpdate(w http.ResponseWriter, r *http.Request) {
-	sess := sessionFrom(r.Context())
-	var in store.DomainInput
-	if !readJSON(w, r, &in) {
-		return
-	}
-	if err := s.store.UpdateDomain(r.Context(), sess.Username, r.PathValue("id"), in); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) domainsDelete(w http.ResponseWriter, r *http.Request) {
-	sess := sessionFrom(r.Context())
-	if err := s.store.DeleteDomain(r.Context(), sess.Username, r.PathValue("id")); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) groupsCreate(w http.ResponseWriter, r *http.Request) {
-	sess := sessionFrom(r.Context())
-	var body struct {
-		Name    string `json:"name"`
-		Comment string `json:"comment"`
-	}
-	if !readJSON(w, r, &body) {
-		return
-	}
-	id, err := s.store.CreateGroup(r.Context(), sess.Username, body.Name, body.Comment)
+	id, err := s.store.CreateService(r.Context(), sess.Username, in.ServiceInput, in.Members)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -350,9 +352,94 @@ func (s *Server) groupsCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
-func (s *Server) groupsDelete(w http.ResponseWriter, r *http.Request) {
+func (s *Server) servicesUpdate(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r.Context())
-	if err := s.store.DeleteGroup(r.Context(), sess.Username, r.PathValue("id")); err != nil {
+	var in store.ServiceInput
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.store.UpdateService(r.Context(), sess.Username, r.PathValue("id"), in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) servicesDelete(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	if err := s.store.DeleteService(r.Context(), sess.Username, r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) membersAdd(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	var body struct {
+		Members []store.MemberInput `json:"members"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if err := s.store.AddMembers(r.Context(), sess.Username, r.PathValue("id"), body.Members); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) membersUpdate(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	var in store.MemberInput
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.store.UpdateMember(r.Context(), sess.Username, r.PathValue("id"), in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) membersDelete(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	if err := s.store.DeleteMember(r.Context(), sess.Username, r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) templates(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.store.ListTemplates(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", "The template list could not be read.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"templates": rows})
+}
+
+func (s *Server) templatesCreate(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	var body struct {
+		Name    string                `json:"name"`
+		Payload store.TemplatePayload `json:"payload"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	id, err := s.store.CreateTemplate(r.Context(), sess.Username, body.Name, body.Payload)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+func (s *Server) templatesDelete(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	if err := s.store.DeleteTemplate(r.Context(), sess.Username, r.PathValue("id")); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -362,12 +449,12 @@ func (s *Server) groupsDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.ListClients(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Список сетей не прочитан.")
+		writeErr(w, http.StatusInternalServerError, "internal", "The network list could not be read.")
 		return
 	}
 	allowOn, denyOn, err := s.store.ListKinds(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Список сетей не прочитан.")
+		writeErr(w, http.StatusInternalServerError, "internal", "The network list could not be read.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -478,12 +565,12 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	st, err := s.store.Settings(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Настройки не прочитаны.")
+		writeErr(w, http.StatusInternalServerError, "internal", "Settings could not be read.")
 		return
 	}
 	ups, err := s.store.ListUpstreams(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Upstream не прочитан.")
+		writeErr(w, http.StatusInternalServerError, "internal", "Upstreams could not be read.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"settings": st, "upstreams": ups})
@@ -627,6 +714,11 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	totals, err := s.store.WindowTotals(r.Context(), window)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	domains, err := s.store.TopDomains(r.Context(), window, limit)
 	if err != nil {
 		s.fail(w, r, err)
@@ -644,6 +736,7 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"window":  r.URL.Query().Get("window"),
+		"totals":  totals,
 		"domains": domains,
 		"clients": clients,
 		"proxy":   proxy,

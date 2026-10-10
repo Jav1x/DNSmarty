@@ -86,7 +86,7 @@ func TestUDPTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !plain.msg.Truncated || len(packed) > mdns.MinMsgSize {
-		t.Fatalf("без EDNS: tc=%v size=%d", plain.msg.Truncated, len(packed))
+		t.Fatalf("without EDNS: tc=%v size=%d", plain.msg.Truncated, len(packed))
 	}
 
 	edns := q.Copy()
@@ -98,7 +98,7 @@ func TestUDPTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(packed) > maxUDPSize {
-		t.Fatalf("EDNS 4096 не урезан до %d: %d", maxUDPSize, len(packed))
+		t.Fatalf("EDNS 4096 not trimmed to %d: %d", maxUDPSize, len(packed))
 	}
 
 	// Over TCP the client gets the full answer.
@@ -119,7 +119,7 @@ func TestANYGetsHINFO(t *testing.T) {
 		t.Fatalf("answers: %d", len(w.msg.Answer))
 	}
 	if h, ok := w.msg.Answer[0].(*mdns.HINFO); !ok || h.Cpu != "RFC8482" {
-		t.Fatalf("ждали HINFO: %v", w.msg.Answer[0])
+		t.Fatalf("wanted HINFO: %v", w.msg.Answer[0])
 	}
 }
 
@@ -145,7 +145,7 @@ func TestANYRefusedOutsideACL(t *testing.T) {
 	w := udpFrom("192.0.2.1")
 	e.ServeDNS(w, q)
 	if w.msg.Rcode != mdns.RcodeRefused || len(w.msg.Answer) != 0 {
-		t.Fatalf("ANY из blacklist: %+v", w.msg)
+		t.Fatalf("ANY from blacklist: %+v", w.msg)
 	}
 }
 
@@ -172,11 +172,11 @@ func TestForwardBusy(t *testing.T) {
 	q := new(mdns.Msg)
 	q.SetQuestion("cdn.test.", mdns.TypeA)
 	if r := e.Resolve(netip.MustParseAddr("192.0.2.1"), q); r.Rcode != mdns.RcodeServerFailure {
-		t.Fatalf("занятый семафор: %d", r.Rcode)
+		t.Fatalf("busy semaphore: %d", r.Rcode)
 	}
 	<-e.forwards
 	if r := e.Resolve(netip.MustParseAddr("192.0.2.1"), q); r.Rcode != mdns.RcodeSuccess {
-		t.Fatalf("после освобождения: %d", r.Rcode)
+		t.Fatalf("after release: %d", r.Rcode)
 	}
 }
 
@@ -207,17 +207,17 @@ func TestRateLimitUDPOnly(t *testing.T) {
 	tcp := &fakeRW{addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 5353}}
 	e.ServeDNS(tcp, q.Copy())
 	if tcp.msg == nil || len(tcp.msg.Answer) != 1 {
-		t.Fatal("TCP попал под лимит UDP")
+		t.Fatal("TCP hit the UDP limit")
 	}
 }
 
 func TestBadSnapshotKeepsOld(t *testing.T) {
 	e := engineWith(t, snapshot.DNS{Version: 1})
 	if err := e.SetSnapshot(&snapshot.DNS{Version: 2, Allow: []string{"nope"}}); err == nil {
-		t.Fatal("битый снимок принят")
+		t.Fatal("broken snapshot accepted")
 	}
 	if e.Snapshot().Version != 1 {
-		t.Fatal("старый снимок потерян")
+		t.Fatal("old snapshot lost")
 	}
 }
 
@@ -230,9 +230,9 @@ func TestNoSnapshotFails(t *testing.T) {
 	select {
 	case r := <-done:
 		if r.Rcode != mdns.RcodeServerFailure {
-			t.Fatalf("без снимка: %d", r.Rcode)
+			t.Fatalf("no snapshot: %d", r.Rcode)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("завис без снимка")
+		t.Fatal("hung without a snapshot")
 	}
 }

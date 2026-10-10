@@ -1,26 +1,22 @@
-// Чистые утилиты редизайна — без зависимостей, покрыты util.test.js.
-
 export function normFqdn(s) {
   return s.trim().toLowerCase().replace(/\.+$/, '');
 }
 
-// Валидация CIDR — msg по лабе 12 (.hint логика).
 export function parseCidr(s) {
-  if (!s) return { ok: true, msg: '' };
-  if (s.includes(':')) return { ok: false, msg: 'IPv6 — во второй фазе' };
+  if (!s) return { ok: true, key: "", params: {} };
+  if (s.includes(":")) return { ok: false, key: "cidrIpv6Later", params: {} };
   const m = s.match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,3})$/);
-  if (!m) return { ok: false, msg: 'формат: a.b.c.d/len' };
-  const oct = m[1].split('.').map(Number);
-  if (oct.some((o) => o > 255)) return { ok: false, msg: 'октет > 255' };
+  if (!m) return { ok: false, key: "cidrFormat", params: {} };
+  const oct = m[1].split(".").map(Number);
+  if (oct.some((o) => o > 255)) return { ok: false, key: "cidrOctet", params: {} };
   const len = Number(m[2]);
-  if (len > 32) return { ok: false, msg: 'маска > 32' };
+  if (len > 32) return { ok: false, key: "cidrMask", params: {} };
   const addrs = 2 ** (32 - len);
-  if (len === 32) return { ok: true, msg: '✓ одиночный адрес (/32)', addrs };
-  if (len === 24) return { ok: true, msg: '✓ подсеть /24 — 256 адресов', addrs };
-  return { ok: true, msg: `✓ подсеть /${len} — ${addrs} адресов`, addrs };
+  if (len === 32) return { ok: true, key: "cidrSingle", params: {}, addrs };
+  if (len === 24) return { ok: true, key: "cidrSubnet24", params: {}, addrs };
+  return { ok: true, key: "cidrSubnet", params: { len, addrs }, addrs };
 }
 
-// Доли в процентах, сумма ровно 100; нули/пустой массив — без NaN.
 export function shares(weights) {
   const total = weights.reduce((a, b) => a + b, 0);
   if (!total) return weights.map(() => 0);
@@ -29,7 +25,6 @@ export function shares(weights) {
   return pct;
 }
 
-// KB/MB/GB как formatBytes в Overview.jsx.
 export function fmtBytes(n) {
   if (n < 1024) return `${n} B`;
   const units = ['KB', 'MB', 'GB'];
@@ -41,8 +36,6 @@ export function fmtBytes(n) {
   return `${(v / 1024).toFixed(1)} TB`;
 }
 
-// Протокол апстрима — вычисляется на клиенте из адреса (лаба 13):
-// https://… → DoH, tls://… или порт 853 → DoT, иначе UDP.
 export function protoOf(addr) {
   const s = String(addr).trim().toLowerCase();
   if (s.startsWith('https://')) return 'doh';
@@ -50,8 +43,6 @@ export function protoOf(addr) {
   return 'udp';
 }
 
-// Короткие формы «12 s» / «12 с»: единицы — сокращения, не склоняются, поэтому
-// плюрал-функции не нужны; t передаётся аргументом (модуль вне React).
 export function ago(iso, t) {
   const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (sec < 60) return t("agoSec", { n: sec });
@@ -62,15 +53,11 @@ export function ago(iso, t) {
   return t("agoDay", { n: Math.floor(h / 24) });
 }
 
-// Обзор (лаба 16): скользящий буфер живых спарклайнов hero-банда —
-// хранит последние n точек (N≈30 опросов по 10 с).
 export function pushHist(hist, value, n) {
   const next = [...hist, value];
   return next.length > n ? next.slice(next.length - n) : next;
 }
 
-// d-строки inline-SVG спарклайна lab16 (path.fill — площадь, path.a — линия),
-// viewBox w×h с отступом pad. Меньше двух точек — пути нет.
 export function sparkPaths(values, w = 200, h = 40, pad = 3) {
   const n = values.length;
   if (n < 2) return null;
@@ -83,34 +70,24 @@ export function sparkPaths(values, w = 200, h = 40, pad = 3) {
   return { line, fill: `${line} L${w},${h} L0,${h} Z` };
 }
 
-// Доля decision='acl' среди DNS-запросов серии точек /api/overview/series
-// (у точки поля dns/refused — из count(*) FILTER decision='acl').
 export function aclShare(points) {
   const dns = points.reduce((a, p) => a + (p.dns || 0), 0);
   if (!dns) return 0;
   return (points.reduce((a, p) => a + (p.refused || 0), 0) / dns) * 100;
 }
 
-// Статистика (задача 10): адреса GET /api/stats и GET /api/stats/client.
-// window — ключ пилюли: "1h" | "6h" | "24h" | "all" (сервер принимает их как есть).
 export function statsPath(win) {
   return `/api/stats?window=${win}`;
 }
 
-// Drill-down клиента: ip кодируется (у IPv6 есть двоеточия), window — тот же ключ.
 export function clientStatsPath(ip, win) {
   return `/api/stats/client?ip=${encodeURIComponent(ip)}&window=${win}`;
 }
 
-// Минимальная очистка ввода IP: пробелы по краям; пустая строка — «не введено».
-// Формат проверяет сервер (netip.ParseAddr) и отдаёт ошибку через Err.
 export function cleanClientIp(s) {
   return String(s ?? "").trim();
 }
 
-// Надёжность пароля 0–4 для живого индикатора аккаунта (лаба 14) — тот же
-// счёт, что в скрипте лабы: балл за длину (12+) и за разнообразие символов
-// (смешанный регистр; цифра или знак; знак при длине 16+). Кап 4.
 export function pwStrength(pw) {
   const v = String(pw ?? "");
   let s = 0;
@@ -121,13 +98,27 @@ export function pwStrength(pw) {
   return s;
 }
 
-// Иконка устройства по user-agent (лаба 14): эвристика по подстрокам —
-// мобильные (iPhone/Android/Mobile) — телефон, всё прочее (и пустое) — компьютер.
 export function deviceIcon(userAgent) {
   return /iphone|android|mobile/i.test(String(userAgent ?? "")) ? "📱" : "💻";
 }
 
-// Строки блока «Состояние»: пустые поля отчёта агента показываем прочерком.
+export function fmtUptime(sec) {
+  if (sec == null || Number.isNaN(Number(sec))) return "—";
+  const s = Math.max(0, Math.floor(Number(sec)));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m`;
+  return `${s}s`;
+}
+
+export function fmtMbps(v) {
+  if (v == null || Number.isNaN(Number(v))) return "—";
+  return `${Number(v).toFixed(1)} Mbps`;
+}
+
 export function hwRows(hw) {
   const fmt = (v, f) => (v == null || v === "" ? "—" : f(v));
   return [

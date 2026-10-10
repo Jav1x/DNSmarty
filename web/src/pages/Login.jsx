@@ -1,15 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { LangSwitch, useI18n } from "../i18n";
 import { Err } from "../components/Bits";
 
-/* Орбитальная сцена входа — разметка/CSS/анимации 1:1 из утверждённого макета
-   .design-lab/lab8.html («Орбиты · развитие»: ядро + 3 орбиты с бейджами
-   доменов + искры + стеклянная форма; финальный вариант логина из итераций
-   lab2–8). Стили — секция «Логин» в styles/pages.css.
-   Сеть прежняя: POST /api/login → onIn(out.user, out.csrf) — App.jsx не тронут. */
-
-// Искры-запросы: те же углы/радиусы/тайминги, что у генератора в lab8 <script>.
 const SPARK_ANGLES = [20, 80, 150, 210, 265, 320];
 const SPARK_RADII = [310, 340, 470];
 
@@ -24,17 +18,34 @@ function sceneSparks() {
   }));
 }
 
+const OAUTH_ERR = {
+  unlinked: "oauthErrUnlinked",
+  denied: "oauthErrDenied",
+  bad_state: "oauthErrState",
+  failed: "oauthErrFailed",
+};
+
+const OAUTH_NAME = {
+  google: "oauthNameGoogle",
+  github: "oauthNameGitHub",
+  yandex: "oauthNameYandex",
+};
+
 export function Login({ onIn }) {
   const { t, err } = useI18n();
+  const [params] = useSearchParams();
   const [error, setError] = useState("");
-  // 2FA-заготовка: ветка включается только когда ответ /api/login содержит
-  // {totp_required:true, ticket} — бэкенд начнёт так отвечать в фазе 2,
-  // до тех пор ветка не срабатывает. Отправка кода — тоже фаза 2.
   const [totpTicket, setTotpTicket] = useState(null);
   const [totpCode, setTotpCode] = useState("");
-  // OAuth-заготовка: фаза 1 не запрашивает GET /api/auth/providers (эндпоинта нет),
-  // кнопки не рисуются. Фаза 2 вернёт загрузку списка и переход на provider.url.
-  const providers = [];
+  const [providers, setProviders] = useState([]);
+  useEffect(() => {
+    let live = true;
+    api("/api/auth/providers").then((d) => {
+      if (live) setProviders(d.providers || []);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const oauthNote = OAUTH_ERR[params.get("oauth")];
 
   async function submit(event) {
     event.preventDefault();
@@ -43,9 +54,20 @@ export function Login({ onIn }) {
       const out = await api("/api/login", { method: "POST", body: JSON.stringify({ username: data.get("username"), password: data.get("password") }) });
       if (out && out.totp_required) {
         setTotpTicket(out.ticket ?? "");
+        setTotpCode("");
         setError("");
         return;
       }
+      onIn(out.user, out.csrf);
+    } catch (e) {
+      setError(e);
+    }
+  }
+
+  async function submitTotp(event) {
+    event.preventDefault();
+    try {
+      const out = await api("/api/login/totp", { method: "POST", body: JSON.stringify({ ticket: totpTicket, code: totpCode }) });
       onIn(out.user, out.csrf);
     } catch (e) {
       setError(e);
@@ -56,13 +78,13 @@ export function Login({ onIn }) {
 
   return (
     <main className="login-scene">
-      {/* направляющие орбиты */}
+
       <div className="orbit o1" /><div className="orbit o2" /><div className="orbit o3" />
-      {/* риплы от ядра */}
+
       <div className="ring" /><div className="ring" /><div className="ring" />
-      {/* пульсирующее ядро */}
+
       <div className="core" />
-      {/* искры: летят с орбит к ядру (4 из лабы + 6 от её генератора) */}
+
       <div className="query" style={{ "--fx": "310px", "--fy": "0px" }} />
       <div className="query q2" style={{ "--fx": "-220px", "--fy": "-160px" }} />
       <div className="query q3" style={{ "--fx": "0px", "--fy": "310px" }} />
@@ -71,25 +93,23 @@ export function Login({ onIn }) {
         <div key={s.key} className={s.cls} style={{ "--fx": `${s.fx}px`, "--fy": `${s.fy}px`, animationDelay: `${s.delay}s`, animationDuration: `${s.duration}s` }} />
       ))}
 
-      {/* спутники: 1-я орбита (два бейджа) */}
       <div className="satwrap w1">
         <div className="satpos" style={{ "--a": "0deg" }}><div className="sat">www.example.com</div></div>
         <div className="satpos" style={{ "--a": "180deg" }}><div className="sat">api.example.com</div></div>
       </div>
-      {/* 2-я орбита (warn, задний ход) */}
+
       <div className="satwrap w2">
         <div className="satpos" style={{ "--a": "0deg" }}><div className="sat">mx1.mail.example.net</div></div>
       </div>
-      {/* 3-я орбита, приглушённые */}
+
       <div className="satwrap w3">
         <div className="satpos" style={{ "--a": "0deg" }}><div className="sat">cdn.edges.example.org</div></div>
       </div>
 
-      {/* стеклянная карточка */}
       <div className="login-card">
         <div className="logo">DNS<b>marty</b></div>
-        <p className="lead">{t("loginLead")}</p>
         <Err text={error} />
+        {oauthNote && <div className="banner err">{t(oauthNote)}</div>}
         {totpTicket === null ? (
           <form className="f" onSubmit={submit}>
             <label htmlFor="l-user">{t("username")}</label>
@@ -101,9 +121,8 @@ export function Login({ onIn }) {
               <div className="oauth">
                 <span className="oauth-lead">{t("orContinueWith")}</span>
                 <div className="oauth-row">
-                  {/* Фаза 2: клик ведёт на URL провайдера — сегодня только отрисовка. */}
                   {providers.map((p) => (
-                    <button key={p.id ?? p.name} type="button" className="oauth-btn">{p.name}</button>
+                    <a key={p.id} className="oauth-btn" href={`/api/auth/oauth/${p.id}/login`}>{t(OAUTH_NAME[p.id] || p.name)}</a>
                   ))}
                 </div>
               </div>
@@ -111,12 +130,12 @@ export function Login({ onIn }) {
             <div className="langrow"><LangSwitch /></div>
           </form>
         ) : (
-          /* 2FA-шаг: поле кода; отправка кода подключается в фазе 2. */
-          <form className="f" onSubmit={(e) => e.preventDefault()}>
+
+          <form className="f" onSubmit={submitTotp}>
             <p className="lead">{t("twoFactorTitle")}</p>
             <label htmlFor="l-totp">{t("twoFactorCode")}</label>
-            <input id="l-totp" name="totp" inputMode="numeric" autoComplete="one-time-code" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
-            <button className="btn" type="submit" disabled>{t("signIn")}</button>
+            <input id="l-totp" name="totp" inputMode="numeric" autoComplete="one-time-code" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} required />
+            <button className="btn" type="submit">{t("signIn")}</button>
             <p className="hint">{t("twoFactorHint")}</p>
           </form>
         )}

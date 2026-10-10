@@ -24,12 +24,12 @@ func TestProbe(t *testing.T) {
 		t.Fatalf("200: %v", err)
 	}
 	if err := probe(context.Background(), bad.URL, time.Second); err == nil {
-		t.Fatal("503 считается здоровым")
+		t.Fatal("503 counted as healthy")
 	}
 	if err := probe(context.Background(), slow.URL, 100*time.Millisecond); err == nil {
-		t.Fatal("таймаут не сработал")
+		t.Fatal("timeout did not fire")
 	}
 	if err := probe(context.Background(), "http://127.0.0.1:1/healthz", time.Second); err == nil {
-		t.Fatal("закрытый порт считается здоровым")
+		t.Fatal("closed port counted as healthy")
 	}
 }

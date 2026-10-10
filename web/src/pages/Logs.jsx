@@ -1,17 +1,3 @@
-// Журналы (лаба 9): фильтр-бар DNS/Прокси — домен с живой нормализацией
-// (normFqdn) и хинтом, IP/CIDR, пресеты времени 1ч/24ч/7д + маска ДД.ММ.ГГГГ,
-// пилюли решение/qtype/rcode, съёмные чипы активных фильтров, гистограмма
-// совпадений. «Заблокировано» в таблице = decision='acl'.
-//
-// Контракт (проверен по internal/panel/api.go s.logs и internal/store/traffic.go):
-//   GET /api/logs?kind=dns|proxy&q=&ip=&decision=|status=&before=&before_id=
-//     → { rows: [...], next: {at, id} | null }, rows по at DESC, keyset-пагинация.
-//   DNS:   { id, at, client_ip, name, qtype, rcode, decision }
-//   Proxy: { id, at, client_ip, sni, bytes_up, bytes_down, status, dial_error }
-//   Серверная сторона фильтрует только q/ip/decision|status: времени, qtype,
-//   rcode и ноды в контракте нет. Время и (у DNS) qtype/rcode фильтруются на
-//   клиенте по загруженным строкам — честно, потому что строки идут
-//   новее-наверху, а окно всегда кончается «сейчас»; колонки «Узел» нет.
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
@@ -25,6 +11,7 @@ import {
   mergeById,
   normDomainInput,
   parseDay,
+  sortRows,
   timeRange,
 } from "../lib/logsfilters";
 import { normFqdn } from "../lib/util";
@@ -42,7 +29,6 @@ const EMPTY = { q: "", ip: "", decision: "", status: "", qtype: "", rcode: "", p
 const HINT_KEYS = { tooLong: "fqdnTooLong", emptyLabel: "fqdnEmptyLabel", badLabel: "fqdnBadLabel" };
 const CHIP_KEYS = { q: "chipDomain", ip: "chipIp", decision: "decision", status: "status", qtype: "qtype", rcode: "rcode" };
 
-// Параметры запроса: q/ip/decision|status уезжают на сервер, курсор — keyset.
 function logsParams(kind, applied, cur) {
   const p = new URLSearchParams({ kind, q: applied.q, ip: applied.ip });
   if (kind === "dns" && applied.decision) p.set("decision", applied.decision);
@@ -54,8 +40,6 @@ function logsParams(kind, applied, cur) {
   return p;
 }
 
-// Подпись чипа: технические значения — как есть (acl, A, NOERROR), время —
-// пресет или «ДД.ММ.ГГГГ — сегодня».
 function chipLabel(c, t) {
   const name = CHIP_KEYS[c.k] || c.k;
   if (c.k === "time") {
@@ -65,7 +49,6 @@ function chipLabel(c, t) {
   return `${t(name)}: ${c.v}`;
 }
 
-// Группа пилюль фильтр-бара (лаба 9): «все» + значения, переключение в draft.
 function PillRow({ label, options, value, onPick }) {
   const { t } = useI18n();
   return (
@@ -83,7 +66,6 @@ function PillRow({ label, options, value, onPick }) {
   );
 }
 
-// Съёмный чип активного фильтра (лаба 9): ✕ снимает фильтр и перезапрашивает.
 function FilterChip({ label, onRemove }) {
   return (
     <span className="chip">
@@ -125,18 +107,13 @@ export function Logs() {
   const [next, setNext] = useState(null);
   const [error, setError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
-  // genRef — поколение запроса: растёт на каждую смену вида/фильтров и при
-  // размонтировании. Ответ с другим поколением отбрасывается.
-  // moreRef — поколение текущей «Загрузить ещё» (null, если её нет): повторный
-  // клик, пока идёт первый, — no-op, даже до ре-рендера кнопки.
+  const [sort, setSort] = useState({ key: "at", dir: "desc" });
   const genRef = useRef(0);
   const moreRef = useRef(null);
 
   const setD = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const appliedKey = JSON.stringify(applied);
 
-  // Первая страница при смене вида или применённых фильтров. live-флаг гасит
-  // ответ сменённого запроса; таймеров здесь нет.
   useEffect(() => {
     let live = true;
     const g = ++genRef.current;
@@ -157,11 +134,8 @@ export function Logs() {
       live = false;
       genRef.current += 1;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- appliedKey заменяет объект applied
   }, [kind, appliedKey]);
 
-  // Курсор и фильтры — из текущего рендера; ответ применяется только если
-  // поколение не сменилось (иначе это строки старого фильтра и старый курсор).
   async function loadMore() {
     if (moreRef.current !== null || !next) return;
     const g = genRef.current;
@@ -191,25 +165,33 @@ export function Logs() {
     setApplied(EMPTY);
   }
 
-  // Съём чипа убирает фильтр и из применённых, и из черновика — строка тут же
-  // перезапрашивается эффектом.
   function removeChip(k) {
     const nextA = k === "time" ? { ...applied, preset: "", day: "" } : { ...applied, [k]: "" };
     setApplied(nextA);
     setDraft(nextA);
   }
 
+  function clickSort(key) {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: key === "at" ? "desc" : "asc" }));
+  }
+  function sortMark(key) {
+    if (sort.key !== key) return "";
+    return sort.dir === "desc" ? " ▾" : " ▴";
+  }
+
   const range = timeRange(applied);
-  const visible = (rows || []).filter((r) =>
-    matchRow(r, kind === "dns" ? applied.qtype : "", kind === "dns" ? applied.rcode : "", range));
+  const visible = sortRows(
+    (rows || []).filter((r) =>
+      matchRow(r, kind === "dns" ? applied.qtype : "", kind === "dns" ? applied.rcode : "", range)),
+    sort.key,
+    sort.dir,
+  );
   const chips = activeFilters(kind, applied);
   const histo = visible.length ? histoBuckets(visible.map((r) => r.at)) : null;
   const chk = fqdnCheck(draft.q);
   const dayValid = !draft.day || parseDay(draft.day).ok;
-  // Пока самая старая загруженная строка внутри окна — ниже могут быть ещё;
-  // как только ушли до его начала — страница последняя (конец окна = сейчас).
   const exhausted = Boolean(range && rows && rows.length && new Date(rows[rows.length - 1].at) < range.start);
-  const cols = 6;
+  const cols = kind === "dns" ? 7 : 6;
 
   return (
     <>
@@ -220,8 +202,8 @@ export function Logs() {
       <form className="fbar" onSubmit={apply}>
         <div className="row1">
           <span className="sel" role="group" aria-label={t("logs")}>
-            <button type="button" className={kind === "dns" ? "on" : ""} aria-pressed={kind === "dns"} onClick={() => setKind("dns")}>{t("kindDns")}</button>
-            <button type="button" className={kind === "proxy" ? "on" : ""} aria-pressed={kind === "proxy"} onClick={() => setKind("proxy")}>{t("proxyTitle")}</button>
+            <button type="button" className={kind === "dns" ? "on" : ""} aria-pressed={kind === "dns"} onClick={() => { setKind("dns"); setSort({ key: "at", dir: "desc" }); }}>{t("kindDns")}</button>
+            <button type="button" className={kind === "proxy" ? "on" : ""} aria-pressed={kind === "proxy"} onClick={() => { setKind("proxy"); setSort({ key: "at", dir: "desc" }); }}>{t("proxyTitle")}</button>
           </span>
           <span className="domwrap">
             <input
@@ -305,13 +287,22 @@ export function Logs() {
             <thead>
               {kind === "dns" ? (
                 <tr>
-                  <th>{t("time")}</th><th>{t("clientIp")}</th><th>{t("domain")}</th>
-                  <th>{t("type")}</th><th>{t("rcode")}</th><th>{t("decision")}</th><th>{t("latencyCol")}</th>
+                  <th className="th-sort" onClick={() => clickSort("at")}>{t("time")}{sortMark("at")}</th>
+                  <th className="th-sort" onClick={() => clickSort("client_ip")}>{t("clientIp")}{sortMark("client_ip")}</th>
+                  <th className="th-sort" onClick={() => clickSort("name")}>{t("domain")}{sortMark("name")}</th>
+                  <th className="th-sort" onClick={() => clickSort("qtype")}>{t("type")}{sortMark("qtype")}</th>
+                  <th className="th-sort" onClick={() => clickSort("rcode")}>{t("rcode")}{sortMark("rcode")}</th>
+                  <th className="th-sort" onClick={() => clickSort("decision")}>{t("decision")}{sortMark("decision")}</th>
+                  <th className="th-sort" onClick={() => clickSort("latency_ms")}>{t("latencyCol")}{sortMark("latency_ms")}</th>
                 </tr>
               ) : (
                 <tr>
-                  <th>{t("time")}</th><th>{t("clientIp")}</th><th>{t("sniTag")}</th>
-                  <th>{t("bytes")}</th><th>{t("status")}</th><th>{t("dialCol")}</th>
+                  <th className="th-sort" onClick={() => clickSort("at")}>{t("time")}{sortMark("at")}</th>
+                  <th className="th-sort" onClick={() => clickSort("client_ip")}>{t("clientIp")}{sortMark("client_ip")}</th>
+                  <th className="th-sort" onClick={() => clickSort("sni")}>{t("sniTag")}{sortMark("sni")}</th>
+                  <th className="th-sort" onClick={() => clickSort("bytes_down")}>{t("bytes")}{sortMark("bytes_down")}</th>
+                  <th className="th-sort" onClick={() => clickSort("status")}>{t("status")}{sortMark("status")}</th>
+                  <th>{t("dialCol")}</th>
                 </tr>
               )}
             </thead>

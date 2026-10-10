@@ -11,4 +11,15 @@ certs/**/*.crt
 .DS_Store
 /state/
 
+# Local-only: specs, agent tooling, IDE/AI notes — never push
 docs/
+.claude/
+.cursor/
+.superpowers/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.vscode/
+*.pem
+*.key
+!certs/**/.gitkeep

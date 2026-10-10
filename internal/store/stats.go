@@ -42,6 +42,15 @@ type ProxyDomain struct {
 	Bytes    int64  `json:"bytes"`
 }
 
+// WindowTotals is the Stats hero: every hit and session in the window, not the top-N cut.
+type WindowTotals struct {
+	Queries  int64 `json:"queries"`
+	Blocked  int64 `json:"blocked"`
+	Clients  int64 `json:"clients"`
+	Sessions int64 `json:"sessions"`
+	Bytes    int64 `json:"bytes"`
+}
+
 // The ranking queries take the window in seconds and the limit. With a window the
 // time clause is $1 and the limit $2; without one ($secs = 0, everything within
 // retention) the time clause is absent and the limit is $1: pgx rejects an unused
@@ -116,6 +125,37 @@ func statsArgs(withTime bool, secs, limit int64) []any {
 		return []any{secs, limit}
 	}
 	return []any{limit}
+}
+
+func totalsArgs(withTime bool, secs int64) []any {
+	if withTime {
+		return []any{secs}
+	}
+	return nil
+}
+
+// WindowTotals sums DNS hits and proxy sessions over the window. window <= 0 means everything.
+func (s *Store) WindowTotals(ctx context.Context, window int64) (WindowTotals, error) {
+	withTime := window > 0
+	cond := "TRUE"
+	if withTime {
+		cond = withWindow
+	}
+	args := totalsArgs(withTime, window)
+	var t WindowTotals
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE decision = 'acl'), count(DISTINCT client_ip)
+		FROM dns_hit
+		WHERE `+cond, args...).Scan(&t.Queries, &t.Blocked, &t.Clients); err != nil {
+		return WindowTotals{}, err
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*), coalesce(sum(bytes_up + bytes_down), 0)
+		FROM proxy_session
+		WHERE `+cond, args...).Scan(&t.Sessions, &t.Bytes); err != nil {
+		return WindowTotals{}, err
+	}
+	return t, nil
 }
 
 // TopDomains ranks DNS hits by query count over the window. window <= 0 means everything.

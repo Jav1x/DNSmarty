@@ -13,7 +13,7 @@ func TestBasics(t *testing.T) {
 	// "a" moved to the front, so "b" is the victim.
 	c.Add("d", 4)
 	if _, ok := c.Get("b"); ok {
-		t.Fatal("b не вытеснен")
+		t.Fatal("b was not evicted")
 	}
 	if c.Len() != 3 {
 		t.Fatalf("len=%d", c.Len())
@@ -25,7 +25,7 @@ func TestReplace(t *testing.T) {
 	c.Add("a", 1)
 	c.Add("a", 2)
 	if v, _ := c.Get("a"); v != 2 {
-		t.Fatalf("не перезаписан: %d", v)
+		t.Fatalf("not overwritten: %d", v)
 	}
 	if c.Len() != 1 {
 		t.Fatalf("len=%d", c.Len())
@@ -45,6 +45,6 @@ func TestRemove(t *testing.T) {
 	c.Remove(1)
 	c.Remove(99)
 	if _, ok := c.Get(1); ok || c.Len() != 0 {
-		t.Fatal("не удалён")
+		t.Fatal("not deleted")
 	}
 }

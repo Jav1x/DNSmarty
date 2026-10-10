@@ -131,7 +131,7 @@ func (s *Server) SetMaxConns(n int) {
 // SetSnapshot compiles and installs p. A snapshot that does not compile is rejected.
 func (s *Server) SetSnapshot(p *snapshot.ProxySnap) error {
 	if p == nil {
-		return errors.New("пустой снимок")
+		return errors.New("empty snapshot")
 	}
 	cp := *p
 	acl, err := snapshot.CompileACL(cp.Allow, cp.Deny, cp.Bootstrap)

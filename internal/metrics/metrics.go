@@ -14,23 +14,23 @@ import (
 var (
 	Stale = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "dnsmarty_config_stale",
-		Help: "1, если узел отвечает по последнему снимку: панель недоступна.",
+		Help: "1 if the node is serving the last snapshot because the panel is unreachable.",
 	})
 	ConfigVersion = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "dnsmarty_config_version",
-		Help: "Версия последнего полученного снимка.",
+		Help: "Version of the last received snapshot.",
 	})
 	DNSQueries = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "dnsmarty_dns_queries_total",
-		Help: "DNS-запросы по решению.",
+		Help: "DNS queries by decision.",
 	}, []string{"decision"})
 	ProxySessions = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "dnsmarty_proxy_sessions_total",
-		Help: "Сессии прокси по статусу.",
+		Help: "Proxy sessions by status.",
 	}, []string{"status"})
 	ProxyBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "dnsmarty_proxy_bytes_total",
-		Help: "Байты splice, без тел в журнале.",
+		Help: "Splice bytes; bodies are not logged.",
 	}, []string{"dir"})
 )
 
