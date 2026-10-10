@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"dnsmarty/internal/buildinfo"
 	"dnsmarty/internal/snapshot"
 	"dnsmarty/internal/store"
 )
@@ -232,8 +233,11 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	window := store.LiveWindowSec(st.PullIntervalSec)
 	out := make([]nodeView, len(rows))
 	for i, n := range rows {
-		nu := n.AgentVersion != "" && n.AgentVersion != s.opts.Version
-		out[i] = nodeView{Node: n, NeedsUpdate: nu, LiveWindowSec: window}
+		out[i] = nodeView{
+			Node:          n,
+			NeedsUpdate:   buildinfo.AgentOutdated(s.opts.Version, n.AgentVersion),
+			LiveWindowSec: window,
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

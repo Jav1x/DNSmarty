@@ -5,7 +5,6 @@
 #   dnsmarty
 set -euo pipefail
 
-VERSION="1.0.0"
 REPO="${DNSMARTY_REPO:-Jav1x/DNSmarty}"
 OWNER="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
 IMAGE_REPO="ghcr.io/${OWNER}/dnsmarty"
@@ -20,6 +19,8 @@ IN_MENU=0
 MENU_SEL=0
 CHECK_FAIL=0
 ENV_CREATED=0
+_CACHED_LATEST_TAG=""
+_CACHED_LATEST_TAG_SET=0
 
 if [[ "${1:-}" == "@" ]]; then
   shift
@@ -431,9 +432,39 @@ sha256_of() {
 }
 
 # latest_tag prints the newest GitHub release tag, or nothing when there is none.
+# Cached for the process lifetime so menus do not hit the API on every redraw.
 latest_tag() {
-  curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
-    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true
+  if [[ "$_CACHED_LATEST_TAG_SET" -eq 1 ]]; then
+    printf '%s' "$_CACHED_LATEST_TAG"
+    return
+  fi
+  _CACHED_LATEST_TAG_SET=1
+  _CACHED_LATEST_TAG=$(
+    curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true
+  )
+  printf '%s' "$_CACHED_LATEST_TAG"
+}
+
+# display_version is the tag shown in banners: --version, pinned/installed image, else latest release.
+display_version() {
+  local img="" tag=""
+  if [[ -n "$WANT_VERSION" ]]; then
+    printf '%s' "${WANT_VERSION#v}"
+    return
+  fi
+  img="${IMAGE:-}"
+  [[ -n "$img" ]] || img=$(env_get DNSMARTY_IMAGE)
+  if [[ -n "$img" && "$img" == *:* ]]; then
+    printf '%s' "${img##*:}"
+    return
+  fi
+  tag=$(latest_tag)
+  if [[ -n "$tag" ]]; then
+    printf '%s' "${tag#v}"
+    return
+  fi
+  printf 'dev'
 }
 
 # resolve_image pins the image to a release tag: --version, then DNSMARTY_IMAGE,
@@ -790,7 +821,7 @@ cmd_install() {
   need_root
   parse_args "$@"
   if [[ "$IN_MENU" -ne 1 ]]; then
-    banner "panel  ${VERSION}"
+    banner "panel  $(display_version)"
   fi
   section "$(say "Checks" "Проверки")"
   audit_tools
@@ -901,7 +932,7 @@ menu() {
   need_root
   while true; do
     clear_screen
-    banner "panel  ${VERSION}"
+    banner "panel  $(display_version)"
     echo
     show_status
     printf '  %s%s%s\n\n' "$D" "$(say "Arrows or a number, Enter to open, q to quit." "Стрелки или цифра, Enter открывает, q выходит.")" "$R"
@@ -936,7 +967,7 @@ menu() {
 }
 
 usage() {
-  banner "panel  ${VERSION}"
+  banner "panel  $(display_version)"
   echo
   if [[ "$lang" == "ru" ]]; then
     cat <<EOF

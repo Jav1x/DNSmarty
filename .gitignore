@@ -15,6 +15,7 @@ certs/**/*.crt
 docs/
 .claude/
 .cursor/
+.archify/
 .superpowers/
 CLAUDE.md
 AGENTS.md
