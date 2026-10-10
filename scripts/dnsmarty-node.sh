@@ -375,6 +375,7 @@ audit_role() {
   else
     check_port 80 tcp "http" "$data_ours"
     check_port 443 tcp "https" "$data_ours"
+    check_port 443 udp "quic" "$data_ours"
     check_port 9102 tcp "metrics" "$data_ours"
     check_firewall_port "$agent"
     check_firewall_port 80
@@ -480,7 +481,7 @@ prompt_role() {
   MENU_SEL=0
   choose \
     "$(say "DNS    ports 53, 853, 8443, agent 9443" "DNS    порты 53, 853, 8443, агент 9443")" \
-    "$(say "Proxy  ports 80, 443, agent 9444" "Прокси порты 80, 443, агент 9444")"
+    "$(say "Proxy  ports 80, 443/tcp+udp, agent 9444" "Прокси порты 80, 443/tcp+udp, агент 9444")"
   case "$MENU_SEL" in
     0) role=dns ;;
     1) role=proxy ;;

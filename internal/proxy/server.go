@@ -104,6 +104,11 @@ type Server struct {
 	res   *lru.Cache[string, resolved]
 
 	transport *http.Transport
+
+	udpDial func(context.Context, *snapshot.ProxySnap, string) (net.Conn, error)
+
+	qmu  sync.Mutex
+	quic map[string]*quicSess
 }
 
 func New(log *slog.Logger, httpAddr, httpsAddr string) *Server {
@@ -118,6 +123,7 @@ func New(log *slog.Logger, httpAddr, httpsAddr string) *Server {
 		active:  map[string]int{},
 		aclSeen: map[string]time.Time{},
 		res:     lru.New[string, resolved](resolveCacheSize),
+		quic:    map[string]*quicSess{},
 	}
 	s.maxConns.Store(defaultMaxConns)
 	s.transport = s.newTransport()
@@ -167,7 +173,20 @@ func (s *Server) Listen(ctx context.Context) error {
 		_ = lnHTTP.Close()
 		return err
 	}
-	return s.Serve(ctx, lnHTTP, lnTLS)
+	pc, err := lc.ListenPacket(ctx, "udp", s.https)
+	if err != nil {
+		_ = lnHTTP.Close()
+		_ = lnTLS.Close()
+		return err
+	}
+	go func() {
+		if err := s.serveQUIC(ctx, pc); err != nil {
+			s.log.Error("quic", "err", err)
+		}
+	}()
+	err = s.Serve(ctx, lnHTTP, lnTLS)
+	_ = pc.Close()
+	return err
 }
 
 // Serve runs both ports on ready listeners until ctx ends.

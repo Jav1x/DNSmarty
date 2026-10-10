@@ -25,15 +25,27 @@ func ParseClientHello(b []byte) (string, error) {
 	if len(b) < 5+recLen {
 		return "", ErrNeedMore
 	}
-	body := b[5 : 5+recLen]
-	if len(body) < 4 || body[0] != 1 {
-		return "", errors.New("not a client hello")
+	return sniFromHandshake(b[5 : 5+recLen])
+}
+
+func sniFromHandshake(b []byte) (string, error) {
+	i := 0
+	for i+4 <= len(b) {
+		typ := b[i]
+		n := int(b[i+1])<<16 | int(b[i+2])<<8 | int(b[i+3])
+		i += 4
+		if n < 0 || i+n > len(b) {
+			return "", errors.New("handshake")
+		}
+		if typ == 1 {
+			return clientHelloSNI(b[i : i+n])
+		}
+		i += n
 	}
-	hsLen := int(body[1])<<16 | int(body[2])<<8 | int(body[3])
-	if hsLen < 0 || 4+hsLen > len(body) {
-		return "", errors.New("bad handshake")
-	}
-	ch := body[4 : 4+hsLen]
+	return "", errors.New("no client hello")
+}
+
+func clientHelloSNI(ch []byte) (string, error) {
 	if len(ch) < 35 {
 		return "", errors.New("short hello")
 	}

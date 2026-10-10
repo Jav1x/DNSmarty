@@ -10,7 +10,7 @@ One Go image (`panel`, `dns`, `proxy`, `migrate`) and a React UI. No third-party
 
 - Split control plane and data plane. The panel, DNS nodes, and proxies can share a machine or run apart.
 - DNS on 53, DoT on 853, and DoH on 8443 share one decision path.
-- SNI proxy splices TCP and does not terminate TLS. No UDP or QUIC.
+- SNI proxy splices TCP and does not terminate TLS. QUIC (HTTP/3) on UDP/443 is a datagram relay after the Initial SNI check; TLS is still not terminated.
 - Several proxies, dropped from rotation when the panel cannot reach them for 30 seconds.
 - Clients outside a whitelist get `REFUSED` once a whitelist exists. An empty whitelist allows every client. A blacklist always refuses. The bootstrap CIDR stays allowed. The proxy applies the same lists.
 - UDP answers are rate-limited per client network (/24, /56) and truncated to what the client accepts. `ANY` gets a single HINFO (RFC 8482).
@@ -63,7 +63,7 @@ dnsmarty-node install --role proxy --key KEY --port 9444
 
 `sh install-node.sh dns` does the same and asks for the key and port. Press Next in the panel. A closed port or a wrong key stays on the node card as an error. A successful check pushes the snapshot.
 
-DNS listens on 53, 853, and DoH 8443. The proxy listens on 80 and 443. The management port is separate. On one machine they are two containers.
+DNS listens on 53, 853, and DoH 8443. The proxy listens on TCP 80/443 and UDP 443 (QUIC). The management port is separate. On one machine they are two containers.
 
 Files live in `/opt/dnsmarty-dns` or `/opt/dnsmarty-proxy`; the last snapshot is in `state/`. `dnsmarty-node update [--version V]` moves to the latest release and recreates the container; keys you added to `.env` by hand are kept. For DoT and DoH the installer creates a self-signed ECDSA certificate; put your own in `certs/cert.pem` and `certs/key.pem` to stop client warnings.
 
