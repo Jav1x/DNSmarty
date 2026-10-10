@@ -1,13 +1,17 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -459,17 +463,16 @@ func resolveOrigin(name string, upstreams []string) ([]net.IP, error) {
 	return out, nil
 }
 
+// dohHTTP is the client for https:// origin lookups. Tests replace it with an
+// httptest client that trusts the fake DoH server certificate.
+var dohHTTP = &http.Client{Timeout: 5 * time.Second}
+
 func lookup(name string, qtype uint16, upstreams []string) ([]net.IP, string, error) {
 	msg := new(mdns.Msg)
 	msg.SetQuestion(mdns.Fqdn(name), qtype)
-	c := &mdns.Client{Net: "tcp", Timeout: 5 * time.Second}
 	var last error
 	for _, u := range upstreams {
-		addr := u
-		if _, _, err := net.SplitHostPort(addr); err != nil {
-			addr = net.JoinHostPort(addr, "53")
-		}
-		resp, _, err := c.Exchange(msg, addr)
+		resp, err := exchange(msg, u)
 		if err != nil {
 			last = err
 			continue
@@ -497,6 +500,65 @@ func lookup(name string, qtype uint16, upstreams []string) ([]net.IP, string, er
 		last = errors.New("no upstream")
 	}
 	return nil, "", last
+}
+
+// exchange asks one upstream. Same address forms as the DNS forwarder:
+// https://… (DoH), tls://host:853 or host:853 (DoT), otherwise classic DNS.
+func exchange(q *mdns.Msg, upstream string) (*mdns.Msg, error) {
+	switch {
+	case strings.HasPrefix(upstream, "https://"):
+		return exchangeDoH(q, upstream)
+	case strings.HasPrefix(upstream, "tls://"):
+		return exchangeDoT(q, strings.TrimPrefix(upstream, "tls://"))
+	}
+	if host, port, err := net.SplitHostPort(upstream); err == nil && port == "853" {
+		return exchangeDoT(q, net.JoinHostPort(host, port))
+	}
+	addr := upstream
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, "53")
+	}
+	c := &mdns.Client{Net: "tcp", Timeout: 5 * time.Second}
+	resp, _, err := c.Exchange(q, addr)
+	return resp, err
+}
+
+func exchangeDoH(q *mdns.Msg, endpoint string) (*mdns.Msg, error) {
+	wire, err := q.Pack()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := dohHTTP.Post(endpoint, "application/dns-message", bytes.NewReader(wire)) //nolint:noctx
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("doh: HTTP " + strconv.Itoa(resp.StatusCode))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 65535))
+	if err != nil {
+		return nil, err
+	}
+	m := new(mdns.Msg)
+	if err := m.Unpack(body); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func exchangeDoT(q *mdns.Msg, addr string) (*mdns.Msg, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	c := &mdns.Client{
+		Net:       "tcp-tls",
+		Timeout:   5 * time.Second,
+		TLSConfig: &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12},
+	}
+	resp, _, err := c.Exchange(q, addr)
+	return resp, err
 }
 
 // splice copies both ways until either side closes or nothing moves in either direction for idle.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync/atomic"
@@ -261,5 +262,60 @@ func TestResolveCached(t *testing.T) {
 	}
 	if atomic.LoadInt64(&n) != afterMiss {
 		t.Fatalf("negative not cached: %d vs %d", n, afterMiss)
+	}
+}
+
+// TestResolveOriginDoH: proxy must resolve origins through https:// DoH upstreams
+// (same format the panel stores for the DNS forwarder). Classic TCP :53 alone is not enough.
+func TestResolveOriginDoH(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/dns-message" {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 65535))
+		if err != nil {
+			http.Error(w, "read", http.StatusBadRequest)
+			return
+		}
+		req := new(mdns.Msg)
+		if err := req.Unpack(body); err != nil || len(req.Question) != 1 {
+			http.Error(w, "unpack", http.StatusBadRequest)
+			return
+		}
+		resp := new(mdns.Msg)
+		resp.SetReply(req)
+		q := req.Question[0]
+		if q.Name == "origin.test." && q.Qtype == mdns.TypeA {
+			resp.Answer = append(resp.Answer, &mdns.A{
+				Hdr: mdns.RR_Header{Name: q.Name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 60},
+				A:   net.IPv4(198, 51, 100, 9),
+			})
+		}
+		wire, err := resp.Pack()
+		if err != nil {
+			http.Error(w, "pack", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write(wire)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := dohHTTP
+	dohHTTP = srv.Client()
+	t.Cleanup(func() { dohHTTP = old })
+
+	ips, err := resolveOrigin("origin.test.", []string{srv.URL + "/dns-query"})
+	if err != nil {
+		t.Fatalf("DoH resolve: %v", err)
+	}
+	if len(ips) != 1 || !ips[0].Equal(net.IPv4(198, 51, 100, 9)) {
+		t.Fatalf("ips=%v want 198.51.100.9", ips)
+	}
+	if hits.Load() < 1 {
+		t.Fatal("DoH upstream was not called")
 	}
 }
