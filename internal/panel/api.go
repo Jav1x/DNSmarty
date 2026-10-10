@@ -283,66 +283,33 @@ func (s *Server) nodesConnect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *Server) domains(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.ListDomains(r.Context())
+type serviceBody struct {
+	store.ServiceInput
+	Members []store.MemberInput `json:"members"`
+}
+
+func (s *Server) services(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListServices(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Список доменов не прочитан.")
+		writeErr(w, http.StatusInternalServerError, "internal", "Список сервисов не прочитан.")
 		return
 	}
 	nodes, _ := s.store.ListNodes(r.Context())
-	groups, err := s.store.ListGroups(r.Context())
+	templates, err := s.store.ListTemplates(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "Список доменов не прочитан.")
+		writeErr(w, http.StatusInternalServerError, "internal", "Список сервисов не прочитан.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"domains": rows, "proxies": proxyOnly(nodes), "groups": groups})
+	writeJSON(w, http.StatusOK, map[string]any{"services": list, "proxies": proxyOnly(nodes), "templates": templates})
 }
 
-func (s *Server) domainsCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) servicesCreate(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r.Context())
-	var in store.DomainInput
+	var in serviceBody
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if err := s.store.CreateDomain(r.Context(), sess.Username, in); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) domainsUpdate(w http.ResponseWriter, r *http.Request) {
-	sess := sessionFrom(r.Context())
-	var in store.DomainInput
-	if !readJSON(w, r, &in) {
-		return
-	}
-	if err := s.store.UpdateDomain(r.Context(), sess.Username, r.PathValue("id"), in); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) domainsDelete(w http.ResponseWriter, r *http.Request) {
-	sess := sessionFrom(r.Context())
-	if err := s.store.DeleteDomain(r.Context(), sess.Username, r.PathValue("id")); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) groupsCreate(w http.ResponseWriter, r *http.Request) {
-	sess := sessionFrom(r.Context())
-	var body struct {
-		Name    string `json:"name"`
-		Comment string `json:"comment"`
-	}
-	if !readJSON(w, r, &body) {
-		return
-	}
-	id, err := s.store.CreateGroup(r.Context(), sess.Username, body.Name, body.Comment)
+	id, err := s.store.CreateService(r.Context(), sess.Username, in.ServiceInput, in.Members)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -350,9 +317,94 @@ func (s *Server) groupsCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
-func (s *Server) groupsDelete(w http.ResponseWriter, r *http.Request) {
+func (s *Server) servicesUpdate(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r.Context())
-	if err := s.store.DeleteGroup(r.Context(), sess.Username, r.PathValue("id")); err != nil {
+	var in store.ServiceInput
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.store.UpdateService(r.Context(), sess.Username, r.PathValue("id"), in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) servicesDelete(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	if err := s.store.DeleteService(r.Context(), sess.Username, r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) membersAdd(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	var body struct {
+		Members []store.MemberInput `json:"members"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if err := s.store.AddMembers(r.Context(), sess.Username, r.PathValue("id"), body.Members); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) membersUpdate(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	var in store.MemberInput
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.store.UpdateMember(r.Context(), sess.Username, r.PathValue("id"), in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) membersDelete(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	if err := s.store.DeleteMember(r.Context(), sess.Username, r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) templates(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.store.ListTemplates(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", "Список шаблонов не прочитан.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"templates": rows})
+}
+
+func (s *Server) templatesCreate(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	var body struct {
+		Name    string                `json:"name"`
+		Payload store.TemplatePayload `json:"payload"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	id, err := s.store.CreateTemplate(r.Context(), sess.Username, body.Name, body.Payload)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+func (s *Server) templatesDelete(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	if err := s.store.DeleteTemplate(r.Context(), sess.Username, r.PathValue("id")); err != nil {
 		s.fail(w, r, err)
 		return
 	}
