@@ -30,6 +30,10 @@
 .side .ghost:hover:not(:disabled) { background: rgba(255,255,255,.03); }
 .main { padding: 22px 26px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
+/* lab16 обзор: спарклайн «время ответа» скрыт до фазы 2 (нет данных в контракте)
+   — укороченная сетка hero-банда на два спарклайна вместо трёх. */
+.hero.ov.no-rt { grid-template-columns: auto 1px 1fr 1px 1fr; }
+
 /* ══ Логин — орбитальная сцена ═════════════════════════════════════════════
    Разметка/CSS/анимации 1:1 из утверждённого макета .design-lab/lab8.html
    («Орбиты · развитие» — финальный вариант логина из итераций lab2–8:

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf } from './util'
+import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare } from './util'
 
 describe('normFqdn', () => {
   it('lowercases and trims trailing dot', () => expect(normFqdn(' Example.COM. ')).toBe('example.com'))
@@ -32,4 +32,45 @@ describe('protoOf', () => {
 describe('ago', () => {
   it('seconds', () => expect(ago(new Date(Date.now()-12000).toISOString())).toBe('12 с'))
   it('minutes', () => expect(ago(new Date(Date.now()-26*60000).toISOString())).toBe('26 мин'))
+})
+// lab16 обзор: живые спарклайны hero-банда (задача 9).
+describe('pushHist', () => {
+  it('keeps the last n points', () => {
+    let h = []
+    for (let i = 1; i <= 5; i++) h = pushHist(h, i, 3)
+    expect(h).toEqual([3, 4, 5])
+  })
+  it('grows from empty up to n', () => {
+    let h = pushHist([], 7, 30)
+    h = pushHist(h, 9, 30)
+    expect(h).toEqual([7, 9])
+  })
+})
+describe('sparkPaths', () => {
+  // viewBox 200×40 как в lab16: отступ 3 сверху/снизу.
+  it('line and closed area over the full range', () => {
+    const { line, fill } = sparkPaths([0, 40], 200, 40)
+    expect(line).toBe('M0,37 L200,3')
+    expect(fill).toBe('M0,37 L200,3 L200,40 L0,40 Z')
+  })
+  it('flat series rides the middle', () => {
+    const { line } = sparkPaths([10, 10, 10], 200, 40)
+    expect(line).toBe('M0,20 L100,20 L200,20')
+  })
+  it('zeros stay on the middle, not a spike', () => {
+    const { line } = sparkPaths([0, 0], 200, 40)
+    expect(line).toBe('M0,20 L200,20')
+  })
+  it('too few points — no path', () => {
+    expect(sparkPaths([5], 200, 40)).toBeNull()
+  })
+})
+describe('aclShare', () => {
+  it('share of refused among dns, in percent', () => {
+    expect(aclShare([{ dns: 100, refused: 4 }, { dns: 100, refused: 0 }])).toBeCloseTo(2)
+  })
+  it('no dns — no share, no NaN', () => {
+    expect(aclShare([])).toBe(0)
+    expect(aclShare([{ dns: 0, refused: 5 }])).toBe(0)
+  })
 })

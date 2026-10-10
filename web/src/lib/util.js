@@ -60,3 +60,32 @@ export function ago(iso) {
   if (h < 24) return `${h} ч`;
   return `${Math.floor(h / 24)} д`;
 }
+
+// Обзор (лаба 16): скользящий буфер живых спарклайнов hero-банда —
+// хранит последние n точек (N≈30 опросов по 10 с).
+export function pushHist(hist, value, n) {
+  const next = [...hist, value];
+  return next.length > n ? next.slice(next.length - n) : next;
+}
+
+// d-строки inline-SVG спарклайна lab16 (path.fill — площадь, path.a — линия),
+// viewBox w×h с отступом pad. Меньше двух точек — пути нет.
+export function sparkPaths(values, w = 200, h = 40, pad = 3) {
+  const n = values.length;
+  if (n < 2) return null;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const y = (v) => (max === min ? h / 2 : h - pad - ((v - min) / (max - min)) * (h - 2 * pad));
+  const f = (x) => String(Math.round(x * 100) / 100);
+  const pts = values.map((v, i) => `${f((i / (n - 1)) * w)},${f(y(v))}`);
+  const line = `M${pts.join(" L")}`;
+  return { line, fill: `${line} L${w},${h} L0,${h} Z` };
+}
+
+// Доля decision='acl' среди DNS-запросов серии точек /api/overview/series
+// (у точки поля dns/refused — из count(*) FILTER decision='acl').
+export function aclShare(points) {
+  const dns = points.reduce((a, p) => a + (p.dns || 0), 0);
+  if (!dns) return 0;
+  return (points.reduce((a, p) => a + (p.refused || 0), 0) / dns) * 100;
+}
