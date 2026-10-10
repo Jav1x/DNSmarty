@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare, statsPath, clientStatsPath, cleanClientIp } from './util'
+import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare, statsPath, clientStatsPath, cleanClientIp, pwStrength, deviceIcon } from './util'
 
 describe('normFqdn', () => {
   it('lowercases and trims trailing dot', () => expect(normFqdn(' Example.COM. ')).toBe('example.com'))
@@ -90,4 +90,25 @@ describe('cleanClientIp', () => {
     expect(cleanClientIp('   ')).toBe('')
     expect(cleanClientIp(null)).toBe('')
   })
+})
+
+// Аккаунт (лаба 14, задача 12): сила пароля для живого индикатора из 4 сегментов.
+describe('pwStrength', () => {
+  // Закреплённые случаи из брифа.
+  it('pin: short lowercase is 0', () => expect(pwStrength('abc')).toBe(0))
+  it('pin: xkcd-style password is at least 3', () => expect(pwStrength('Tr0ub4dour&3')).toBe(3))
+  it('empty is 0', () => expect(pwStrength('')).toBe(0))
+  it('12 lowercase letters — only the length point', () => expect(pwStrength('abcdefghijkl')).toBe(1))
+  it('12 mixed-case letters with a digit', () => expect(pwStrength('Abcdefgh1234')).toBe(3))
+  it('17 chars with symbol reaches the cap', () => expect(pwStrength('Tr0ub4dour&3n1gma')).toBe(4))
+})
+
+// Аккаунт (лаба 14, задача 12): иконка устройства по user-agent.
+describe('deviceIcon', () => {
+  it('iPhone is a phone', () => expect(deviceIcon('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')).toBe('📱'))
+  it('Android is a phone', () => expect(deviceIcon('Mozilla/5.0 (Linux; Android 14; Pixel 8)')).toBe('📱'))
+  it('Mobile substring is a phone', () => expect(deviceIcon('Opera Mini Mobile')).toBe('📱'))
+  it('desktop UA is a computer', () => expect(deviceIcon('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15')).toBe('💻'))
+  it('empty UA defaults to computer', () => expect(deviceIcon('')).toBe('💻'))
+  it('undefined UA defaults to computer', () => expect(deviceIcon(undefined)).toBe('💻'))
 })

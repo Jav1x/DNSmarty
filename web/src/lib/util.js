@@ -106,3 +106,22 @@ export function clientStatsPath(ip, win) {
 export function cleanClientIp(s) {
   return String(s ?? "").trim();
 }
+
+// Надёжность пароля 0–4 для живого индикатора аккаунта (лаба 14) — тот же
+// счёт, что в скрипте лабы: балл за длину (12+) и за разнообразие символов
+// (смешанный регистр; цифра или знак; знак при длине 16+). Кап 4.
+export function pwStrength(pw) {
+  const v = String(pw ?? "");
+  let s = 0;
+  if (v.length >= 12) s++;
+  if (/[a-z]/.test(v) && /[A-Z]/.test(v)) s++;
+  if (/\d/.test(v) || /[^a-zA-Z0-9]/.test(v)) s++;
+  if (v.length >= 16 && /[^a-zA-Z0-9]/.test(v)) s++;
+  return s;
+}
+
+// Иконка устройства по user-agent (лаба 14): эвристика по подстрокам —
+// мобильные (iPhone/Android/Mobile) — телефон, всё прочее (и пустое) — компьютер.
+export function deviceIcon(userAgent) {
+  return /iphone|android|mobile/i.test(String(userAgent ?? "")) ? "📱" : "💻";
+}

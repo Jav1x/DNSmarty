@@ -210,6 +210,18 @@
 .finput.stats-ip { width: 180px; }
 td.hot { color: var(--danger); }
 
+/* ══ Аккаунт — профиль-банд и парольная форма (лаба 14) ════════════════════
+   Общие классы (.hero.acc/.avatar/.role/.hstats/.strength/.stlbl/.dev/.curtag/
+   .audit/.arow) уже в ui.css; здесь — два хвоста. 1) Селектор .who в этом
+   файле держит блок «кто в панели» сайдбара (колонка с margin-top:auto) и
+   по каскаду дотянулся бы до .who внутри .hero.acc — возвращаем лабовое
+   поведение inline-блока. 2) Итог совпадения пароля в лабе красился inline —
+   здесь классами (у .stlbl нет своих ok/bad в ui.css). */
+.hero.acc .who { margin-top: 0; padding-top: 0; gap: 0; }
+.hero.acc .who b { color: var(--text); }
+.stlbl.ok { color: var(--ok); }
+.stlbl.bad { color: var(--danger); }
+
 /* ══ Журналы — фильтр-бар (лаба 9) ═════════════════════════════════════════
    Общие классы (.sel/.quick/.chip/.finput/.histo/.card/.counts/.dec/.btn/
    .pager) уже слиты в ui.css; здесь — каркас фильтр-бара и то, что лаба держала
