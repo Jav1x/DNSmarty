@@ -39,12 +39,12 @@ type ProxyReport struct {
 }
 
 type DNSLog struct {
-	ID       int64     `json:"id"`
-	At       time.Time `json:"at"`
-	ClientIP string    `json:"client_ip"`
-	Name     string    `json:"name"`
-	QType    string    `json:"qtype"`
-	Rcode    string    `json:"rcode"`
+	ID        int64     `json:"id"`
+	At        time.Time `json:"at"`
+	ClientIP  string    `json:"client_ip"`
+	Name      string    `json:"name"`
+	QType     string    `json:"qtype"`
+	Rcode     string    `json:"rcode"`
 	Decision  string    `json:"decision"`
 	LatencyMS *int      `json:"latency_ms"`
 }

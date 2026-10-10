@@ -1,8 +1,10 @@
 package dns
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -31,11 +33,11 @@ const (
 )
 
 type Hit struct {
-	At       time.Time
-	ClientIP string
-	QName    string
-	QType    string
-	Rcode    string
+	At        time.Time
+	ClientIP  string
+	QName     string
+	QType     string
+	Rcode     string
 	Decision  string
 	LatencyMS *int
 }
@@ -50,6 +52,8 @@ type Engine struct {
 	// forwards bounds upstream queries in flight; a flood of unknown names cannot open unbounded sockets.
 	forwards chan struct{}
 	cache    *cache
+	dotRoots *x509.CertPool
+	doh      *http.Client
 }
 
 func NewEngine(log *slog.Logger) *Engine {
@@ -62,6 +66,7 @@ func NewEngine(log *slog.Logger) *Engine {
 		limit:    ratelimit.New(defaultRateQPS),
 		forwards: make(chan struct{}, defaultForwardMax),
 		cache:    newCache(),
+		doh:      &http.Client{Timeout: 3 * time.Second},
 	}
 	e.enabled.Store(true)
 	return e
@@ -370,18 +375,9 @@ func (e *Engine) forward(req *mdns.Msg, upstreams []string) (*mdns.Msg, error) {
 	}
 	q := req.Copy()
 	q.Id = mdns.Id()
-	udp := &mdns.Client{Net: "udp", Timeout: 2 * time.Second, UDPSize: maxUDPSize}
-	tcp := &mdns.Client{Net: "tcp", Timeout: 3 * time.Second}
 	var last error
 	for _, u := range upstreams {
-		addr := u
-		if _, _, err := net.SplitHostPort(addr); err != nil {
-			addr = net.JoinHostPort(addr, "53")
-		}
-		r, _, err := udp.Exchange(q, addr)
-		if err == nil && r != nil && r.Truncated {
-			r, _, err = tcp.Exchange(q, addr)
-		}
+		r, err := e.exchange(q, u)
 		if err != nil {
 			last = err
 			continue
@@ -397,6 +393,78 @@ func (e *Engine) forward(req *mdns.Msg, upstreams []string) (*mdns.Msg, error) {
 		last = errors.New("no upstream")
 	}
 	return nil, last
+}
+
+func UpstreamProto(addr string) string {
+	if strings.HasPrefix(addr, "https://") {
+		return "doh"
+	}
+	if strings.HasPrefix(addr, "tls://") {
+		return "dot"
+	}
+	if _, port, err := net.SplitHostPort(addr); err == nil && port == "853" {
+		return "dot"
+	}
+	return "udp"
+}
+
+func (e *Engine) exchange(q *mdns.Msg, upstream string) (*mdns.Msg, error) {
+	switch UpstreamProto(upstream) {
+	case "doh":
+		return e.exchangeDoH(q, upstream)
+	case "dot":
+		return e.exchangeDoT(q, upstream)
+	}
+	addr := upstream
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, "53")
+	}
+	udp := &mdns.Client{Net: "udp", Timeout: 2 * time.Second, UDPSize: maxUDPSize}
+	r, _, err := udp.Exchange(q, addr)
+	if err == nil && r != nil && r.Truncated {
+		tcp := &mdns.Client{Net: "tcp", Timeout: 3 * time.Second}
+		r, _, err = tcp.Exchange(q, addr)
+	}
+	return r, err
+}
+
+func (e *Engine) exchangeDoT(q *mdns.Msg, upstream string) (*mdns.Msg, error) {
+	addr := strings.TrimPrefix(upstream, "tls://")
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	c := &mdns.Client{
+		Net:       "tcp-tls",
+		Timeout:   3 * time.Second,
+		TLSConfig: &tls.Config{ServerName: host, RootCAs: e.dotRoots, MinVersion: tls.VersionTLS12},
+	}
+	r, _, err := c.Exchange(q, addr)
+	return r, err
+}
+
+func (e *Engine) exchangeDoH(q *mdns.Msg, endpoint string) (*mdns.Msg, error) {
+	wire, err := q.Pack()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := e.doh.Post(endpoint, "application/dns-message", bytes.NewReader(wire))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("doh: HTTP " + strconv.Itoa(resp.StatusCode))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 65535))
+	if err != nil {
+		return nil, err
+	}
+	m := new(mdns.Msg)
+	if err := m.Unpack(body); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func sameQuestion(q, r *mdns.Msg) bool {

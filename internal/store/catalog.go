@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -555,22 +556,51 @@ func normalizeCIDR(raw string) (string, error) {
 	return n.String(), nil
 }
 
+var errUpstreamForm = fmt.Errorf("%w: upstream: IP, host:853 (DoT) или https://… (DoH)", ErrInvalid)
+
 func NormalizeUpstream(addr string) (string, error) {
 	addr = strings.TrimSpace(addr)
-	host := addr
-	port := "53"
-	if h, p, err := net.SplitHostPort(addr); err == nil {
+	if strings.HasPrefix(addr, "https://") {
+		u, err := url.Parse(addr)
+		if err != nil || u.Host == "" {
+			return "", errUpstreamForm
+		}
+		return addr, nil
+	}
+	rest, tlsScheme := strings.CutPrefix(addr, "tls://")
+	host, port := rest, ""
+	if h, p, err := net.SplitHostPort(rest); err == nil {
 		host, port = h, p
 	}
 	ip := net.ParseIP(host)
-	if ip == nil {
-		return "", fmt.Errorf("%w: upstream должен быть IP", ErrInvalid)
+	if port == "" {
+		switch {
+		case tlsScheme:
+			port = "853"
+		case ip != nil:
+			port = "53"
+		default:
+			return "", errUpstreamForm
+		}
 	}
 	pn, err := strconv.Atoi(port)
 	if err != nil || pn < 1 || pn > 65535 {
 		return "", fmt.Errorf("%w: порт upstream", ErrInvalid)
 	}
-	return net.JoinHostPort(ip.String(), strconv.Itoa(pn)), nil
+	if tlsScheme || pn == 853 {
+		if ip != nil {
+			return net.JoinHostPort(ip.String(), port), nil
+		}
+		host = strings.ToLower(strings.TrimSuffix(host, "."))
+		if host == "" {
+			return "", errUpstreamForm
+		}
+		return net.JoinHostPort(host, port), nil
+	}
+	if ip == nil {
+		return "", errUpstreamForm
+	}
+	return net.JoinHostPort(ip.String(), port), nil
 }
 
 func normalizeSettings(st *Settings) (string, error) {
