@@ -99,7 +99,7 @@ func loadDNSBody(ctx context.Context, tx pgx.Tx) (snapshot.DNS, error) {
 		id, name, match, balance string
 	}
 	var domains []drow
-	rows, err = tx.Query(ctx, `SELECT id::text, name, match_kind, balance FROM domain WHERE enabled ORDER BY name`)
+	rows, err = tx.Query(ctx, `SELECT d.id::text, d.name, d.match_kind, s.strategy FROM domain d JOIN service s ON s.id = d.service_id WHERE d.enabled AND s.enabled ORDER BY d.name`)
 	if err != nil {
 		return body, err
 	}
@@ -118,12 +118,14 @@ func loadDNSBody(ctx context.Context, tx pgx.Tx) (snapshot.DNS, error) {
 	rows.Close()
 
 	rows, err = tx.Query(ctx, `
-		SELECT dp.domain_id::text, n.id::text,
-		       coalesce(host(n.public_ipv4), ''), coalesce(host(n.public_ipv6), ''), dp.weight
-		FROM domain_proxy dp
-		JOIN node n ON n.id = dp.proxy_node_id
-		JOIN domain d ON d.id = dp.domain_id
+		SELECT d.id::text, n.id::text,
+		       coalesce(host(n.public_ipv4), ''), coalesce(host(n.public_ipv6), ''), sp.weight
+		FROM service_proxy sp
+		JOIN node n ON n.id = sp.proxy_node_id
+		JOIN service s ON s.id = sp.service_id
+		JOIN domain d ON d.service_id = s.id
 		WHERE d.enabled
+		  AND s.enabled
 		  AND n.enabled
 		  AND n.role = 'proxy'
 		  AND n.last_seen_at IS NOT NULL
@@ -199,8 +201,9 @@ func loadProxyBody(ctx context.Context, tx pgx.Tx, nodeID string) (snapshot.Prox
 		rows, err = tx.Query(ctx, `
 			SELECT d.name, d.match_kind
 			FROM domain d
-			JOIN domain_proxy dp ON dp.domain_id = d.id
-			WHERE dp.proxy_node_id = $1 AND d.enabled
+			JOIN service s ON s.id = d.service_id
+			WHERE d.enabled AND s.enabled
+			  AND EXISTS (SELECT 1 FROM service_proxy sp WHERE sp.service_id = s.id AND sp.proxy_node_id = $1)
 			ORDER BY d.name
 		`, nodeID)
 		if err != nil {
