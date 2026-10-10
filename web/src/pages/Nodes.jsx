@@ -159,7 +159,6 @@ export function Nodes() {
           {t("bulkSel", { n: selNodes.length })}
           <button type="button" className="btn ghost sm" onClick={() => bulkEnabled(true)}>{t("toRot")}</button>
           <button type="button" className="btn ghost sm" onClick={() => bulkEnabled(false)}>{t("fromRot")}</button>
-          <button type="button" className="btn ghost sm" onClick={() => bulkEnabled(false)}>{t("bulkDisable")}</button>
           <button type="button" className="btn ghost sm bulkdel" onClick={bulkDelete}>{t("delete")}</button>
         </div>
       )}

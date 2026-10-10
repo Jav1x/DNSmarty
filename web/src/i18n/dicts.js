@@ -98,7 +98,6 @@ export const dict = {
     bulkSel: ({ n = 0 }) => `Selected ${n} node${n === 1 ? "" : "s"}`,
     toRot: "Put in rotation",
     fromRot: "Take out of rotation",
-    bulkDisable: "Disable",
     bulkDeleteConfirm: ({ n = 0 }) => `Delete ${n} selected node${n === 1 ? "" : "s"}? This cannot be undone.`,
     hintDrag: "dragging reorders the rows · a custom rotation order lands in the next phase",
     editing: "Editing",
@@ -494,7 +493,6 @@ export const dict = {
     },
     toRot: "В ротацию",
     fromRot: "Из ротации",
-    bulkDisable: "Отключить",
     bulkDeleteConfirm: ({ n = 0 } = {}) => {
       const num = Number(n) || 0, k = num % 10, h = num % 100;
       const few = [2, 3, 4].includes(k) && !(h >= 12 && h <= 14);

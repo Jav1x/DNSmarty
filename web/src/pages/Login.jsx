@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { api } from "../api";
 import { LangSwitch, useI18n } from "../i18n";
 import { Err } from "../components/Bits";
@@ -32,20 +32,9 @@ export function Login({ onIn }) {
   // до тех пор ветка не срабатывает. Отправка кода — тоже фаза 2.
   const [totpTicket, setTotpTicket] = useState(null);
   const [totpCode, setTotpCode] = useState("");
-  // OAuth-заготовка: GET /api/auth/providers; на 404/пустом списке/сбое сети
-  // кнопок нет и не крашится. Реализация потока — фаза 2 (переход на provider.url).
-  const [providers, setProviders] = useState([]);
-
-  useEffect(() => {
-    let live = true;
-    api("/api/auth/providers")
-      .then((d) => {
-        if (!live) return;
-        setProviders(Array.isArray(d) ? d.filter((p) => p && p.name) : []);
-      })
-      .catch(() => { /* фаза 1: эндпоинта нет — тихо без кнопок */ });
-    return () => { live = false; };
-  }, []);
+  // OAuth-заготовка: фаза 1 не запрашивает GET /api/auth/providers (эндпоинта нет),
+  // кнопки не рисуются. Фаза 2 вернёт загрузку списка и переход на provider.url.
+  const providers = [];
 
   async function submit(event) {
     event.preventDefault();
