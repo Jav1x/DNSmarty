@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -373,12 +374,8 @@ func replaceServiceProxies(ctx context.Context, tx pgx.Tx, serviceID string, pro
 		return err
 	}
 	for _, p := range proxies {
-		var role string
-		if err := tx.QueryRow(ctx, `SELECT role FROM node WHERE id = $1`, p.ProxyID).Scan(&role); err != nil {
-			return mapErr(err)
-		}
-		if role != snapshot.RoleProxy {
-			return fmt.Errorf("%w: вес только у прокси", ErrInvalid)
+		if err := requireProxy(ctx, tx, p.ProxyID); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO service_proxy (service_id, proxy_node_id, weight) VALUES ($1, $2, $3)
@@ -430,4 +427,91 @@ func normalizeMember(m *MemberInput) error {
 		return fmt.Errorf("%w: комментарий", ErrInvalid)
 	}
 	return nil
+}
+
+func requireProxy(ctx context.Context, tx pgx.Tx, nodeID string) error {
+	var role string
+	if err := tx.QueryRow(ctx, `SELECT role FROM node WHERE id = $1`, nodeID).Scan(&role); err != nil {
+		return mapErr(err)
+	}
+	if role != snapshot.RoleProxy {
+		return fmt.Errorf("%w: вес только у прокси", ErrInvalid)
+	}
+	return nil
+}
+
+type Template struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Payload   json.RawMessage `json:"payload"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+type TemplatePayload struct {
+	Domains  []MemberInput `json:"domains"`
+	Strategy string        `json:"strategy"`
+	Proxies  []ProxyWeight `json:"proxies"`
+}
+
+func (s *Store) ListTemplates(ctx context.Context) ([]Template, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id::text, name, payload, created_at FROM service_template ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Template{}
+	for rows.Next() {
+		var t Template
+		var raw []byte
+		if err := rows.Scan(&t.ID, &t.Name, &raw, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		t.Payload = raw
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateTemplate(ctx context.Context, actor, name string, p TemplatePayload) (string, error) {
+	if err := normalizeService(&ServiceInput{Name: name, Strategy: p.Strategy, Proxies: p.Proxies}); err != nil {
+		return "", err
+	}
+	name = strings.TrimSpace(name)
+	if len(p.Domains) == 0 {
+		return "", fmt.Errorf("%w: шаблон без доменов", ErrInvalid)
+	}
+	for i := range p.Domains {
+		if err := normalizeMember(&p.Domains[i]); err != nil {
+			return "", err
+		}
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
+	var id string
+	err = s.tx(ctx, func(tx pgx.Tx) error {
+		for _, px := range p.Proxies {
+			if err := requireProxy(ctx, tx, px.ProxyID); err != nil {
+				return err
+			}
+		}
+		if err := tx.QueryRow(ctx, `INSERT INTO service_template (name, payload) VALUES ($1, $2) RETURNING id::text`, name, raw).Scan(&id); err != nil {
+			return mapErr(err)
+		}
+		detail, _ := json.Marshal(map[string]string{"id": id, "name": name})
+		return auditTx(ctx, tx, actor, "template.create", detail)
+	})
+	return id, err
+}
+
+func (s *Store) DeleteTemplate(ctx context.Context, actor, id string) error {
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		var name string
+		if err := tx.QueryRow(ctx, `DELETE FROM service_template WHERE id = $1 RETURNING name`, id).Scan(&name); err != nil {
+			return mapErr(err)
+		}
+		detail, _ := json.Marshal(map[string]string{"id": id, "name": name})
+		return auditTx(ctx, tx, actor, "template.delete", detail)
+	})
 }
