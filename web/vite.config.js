@@ -14,6 +14,8 @@ export default defineConfig({
   build: {
     outDir: "../internal/panel/dist",
     emptyOutDir: true,
+    // CSP font-src 'self' (middleware.go) не допускает data: — шрифты отдаём файлами
+    assetsInlineLimit: 0,
   },
   server: {
     proxy: {
