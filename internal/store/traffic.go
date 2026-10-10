@@ -326,15 +326,15 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	if o.BayProxies == nil {
 		o.BayProxies = []Node{}
 	}
-	domains, err := s.ListDomains(ctx)
+	services, err := s.ListServices(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
-	for _, d := range domains {
-		row := BayRow{Name: d.Name, Balance: d.Balance, Enabled: d.Enabled, Cells: []BayCell{}}
+	for _, svc := range services {
+		row := BayRow{Name: svc.Name, Balance: svc.Strategy, Enabled: svc.Enabled, Cells: []BayCell{}}
 		for _, p := range o.BayProxies {
 			state := "empty"
-			for _, w := range d.Weights {
+			for _, w := range svc.Proxies {
 				if w.ProxyID == p.ID && w.On {
 					state = "dead"
 					if p.Fresh && (p.PublicIPv4 != "" || p.PublicIPv6 != "") {
