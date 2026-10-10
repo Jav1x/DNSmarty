@@ -152,7 +152,7 @@ func Serve(ctx context.Context, ln net.Listener, cfg Config) error {
 	})
 	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
 		hits, sessions := stats.Drain()
-		writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "sessions": sessions})
+		writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "sessions": sessions, "hw": CollectHW("/")})
 	})
 	srv := &http.Server{
 		Handler:           mux,
