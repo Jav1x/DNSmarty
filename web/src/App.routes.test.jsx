@@ -36,10 +36,8 @@ const appRoutes = [
   <Route key="nodes" path="/nodes" element={<Spy tag="nodes" />} />,
   /* Спец §4: «Доступ» — прежняя страница Клиентов. */
   <Route key="access" path={ROUTES.access} element={<Spy tag="access" />} />,
-  /* Фаза 1: «Сервисы» редиректит на старую страницу доменов. */
-  <Route key="services" path={ROUTES.services} element={<Navigate to="/domains" replace />} />,
-  /* /domains живёт как раньше (старая страница, до фазы 2). */
-  <Route key="domains" path="/domains" element={<Spy tag="domains" />} />,
+  <Route key="services" path={ROUTES.services} element={<Spy tag="services" />} />,
+  <Route key="domains" path="/domains" element={<Navigate to={ROUTES.redirect.domains} replace />} />,
   /* Старая закладка /clients не отдаёт 404 (ROUTES.redirect). */
   <Route key="clients" path="/clients" element={<Navigate to={ROUTES.redirect.clients} replace />} />,
   <Route key="logs" path="/logs" element={<Spy tag="logs" />} />,
@@ -76,12 +74,12 @@ describe("Route table of App.jsx (real MemoryRouter run)", () => {
     expect(renderRoutesAt("/clients")).toBe("access");
   });
 
-  it("keeps legacy /domains working (renders the Domains page)", () => {
-    expect(renderRoutesAt("/domains")).toBe("domains");
+  it("legacy /domains redirects to the Services page", () => {
+    expect(renderRoutesAt("/domains")).toBe("services");
   });
 
-  it("/services redirects to /domains content in phase 1", () => {
-    expect(renderRoutesAt("/services")).toBe("domains");
+  it("/services renders the Services page", () => {
+    expect(renderRoutesAt("/services")).toBe("services");
   });
 
   it("/access renders the Access (ex-Clients) page directly", () => {
@@ -108,7 +106,7 @@ describe("ROUTES (spec §4 IA)", () => {
     expect(ROUTES.redirect.clients).toBe("/access");
   });
 
-  it("keeps legacy /domains as its own working path (not a redirect away)", () => {
-    expect(ROUTES.redirect.domains).toBe("/domains");
+  it("redirects legacy /domains to /services", () => {
+    expect(ROUTES.redirect.domains).toBe("/services");
   });
 });

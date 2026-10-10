@@ -86,12 +86,15 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO domain_proxy (domain_id, proxy_node_id, weight)
-		SELECT id, $1, 1 FROM domain WHERE name = 'example.com'
+		INSERT INTO service_proxy (service_id, proxy_node_id, weight)
+		SELECT service_id, $1, 1 FROM domain WHERE name = 'example.com'
 	`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE domain SET balance = 'sticky24' WHERE name = 'example.com'`); err != nil {
+	if _, err := pool.Exec(ctx, `
+		UPDATE service s SET strategy = 'sticky24'
+		FROM domain d WHERE d.service_id = s.id AND d.name = 'example.com'
+	`); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateClient(ctx, "test", "127.0.0.1/32", "local", "allow", true); err != nil {
@@ -314,7 +317,7 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatalf("нет CSP: %q", rootResp.Header.Get("Content-Security-Policy"))
 	}
 	// State change without the CSRF header is refused.
-	if code := apiCall(t, ts.URL, http.MethodPost, "/api/groups", `{"name":"x"}`, "application/json", sess.cookie, ""); code != http.StatusForbidden {
+	if code := apiCall(t, ts.URL, http.MethodPost, "/api/services", `{"name":"x"}`, "application/json", sess.cookie, ""); code != http.StatusForbidden {
 		t.Fatalf("без CSRF: %d", code)
 	}
 	// The stats endpoint returns all three aggregates; a bad ip is rejected.
@@ -351,7 +354,7 @@ func TestPostgresDecisions(t *testing.T) {
 		t.Fatalf("bad ip with session: %d", code)
 	}
 	// Form-encoded body is refused.
-	if code := apiCall(t, ts.URL, http.MethodPost, "/api/groups", `name=x`, "application/x-www-form-urlencoded", sess.cookie, sess.csrf); code != http.StatusUnsupportedMediaType {
+	if code := apiCall(t, ts.URL, http.MethodPost, "/api/services", `name=x`, "application/x-www-form-urlencoded", sess.cookie, sess.csrf); code != http.StatusUnsupportedMediaType {
 		t.Fatalf("form body: %d", code)
 	}
 

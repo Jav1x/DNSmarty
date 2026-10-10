@@ -4,9 +4,9 @@
 export const ROUTES = {
   access: "/access",
   services: "/services",
-  // Legacy bookmarks: /clients → /access; /domains stays as-is (page follows in phase 2).
+  // Legacy bookmarks: /clients → /access; /domains → /services.
   redirect: {
     clients: "/access",
-    domains: "/domains",
+    domains: "/services",
   },
 };

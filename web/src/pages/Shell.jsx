@@ -8,8 +8,7 @@ import { ROUTES } from "../routes";
 /* Сайдбар — спец §4: три группы (Мониторинг / Управление / Панель).
    Разметка и глифы 1:1 из утверждённого макета .design-lab/lab16.html:
    mono-глифы в .ic, активный пункт .on с inset-полосой.
-   Активность считает сам Shell (не NavLink), чтобы «Сервисы» подсвечивался,
-   пока /services в фазе 1 отдаёт редирект на /domains. */
+   Активность считает сам Shell (не NavLink). */
 const groups = [
   ["groupMonitoring", [
     ["/", "overview", "◉"],
@@ -18,7 +17,7 @@ const groups = [
   ]],
   ["groupManagement", [
     ["/nodes", "nodes", "◈"],
-    [ROUTES.services, "services", "❧", [ROUTES.services, "/domains"]],
+    [ROUTES.services, "services", "❧"],
     [ROUTES.access, "access", "⛨"],
   ]],
   ["groupPanel", [

@@ -8,7 +8,7 @@ import { Login } from "./pages/Login";
 import { Shell } from "./pages/Shell";
 import { Overview } from "./pages/Overview";
 import { Nodes } from "./pages/Nodes";
-import { Domains } from "./pages/Domains";
+import { Services } from "./pages/Services";
 import { Access } from "./pages/Access";
 import { Logs } from "./pages/Logs";
 import { Stats } from "./pages/Stats";
@@ -35,10 +35,8 @@ export function App() {
             <Route path="/nodes" element={<Nodes />} />
             {/* Спец §4: «Доступ» — это прежняя страница Клиентов (визуально переписывается в задаче 5). */}
             <Route path={ROUTES.access} element={<Access />} />
-            {/* Фаза 1: «Сервисы» показывает старую страницу доменов; новая модель — фаза 2. */}
-            <Route path={ROUTES.services} element={<Navigate to="/domains" replace />} />
-            {/* /domains живёт как раньше, пока новая модель сервисов не готова (фаза 2). */}
-            <Route path="/domains" element={<Domains />} />
+            <Route path={ROUTES.services} element={<Services />} />
+            <Route path="/domains" element={<Navigate to={ROUTES.redirect.domains} replace />} />
             {/* Старые закладки не должны отдавать 404 (ROUTES.redirect). */}
             <Route path="/clients" element={<Navigate to={ROUTES.redirect.clients} replace />} />
             <Route path="/logs" element={<Logs />} />
