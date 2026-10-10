@@ -82,12 +82,6 @@
 /* A block switched off: dimmed, its controls inert. */
 .block-off { opacity: 0.45; pointer-events: none; user-select: none; }
 
-/* Sparkline */
-.spark { display: block; width: 100%; height: 40px; }
-.spark .line { fill: none; stroke: var(--accent); stroke-width: 1.8; }
-.spark .fill { fill: var(--accent-soft); stroke: none; }
-.spark .danger { stroke: var(--danger); }
-
 /* Mobile drawer */
 .burger { display: none; }
 .backdrop { position: fixed; inset: 0; z-index: 45; background: rgba(10, 13, 17, 0.5); border: 0; padding: 0; }

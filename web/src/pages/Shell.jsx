@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { LogOut, Menu, Monitor, Sun, Moon } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
 import { api } from "../api";
 import { LangSwitch, useI18n } from "../i18n";
-import { useTheme } from "../hooks/useLoad";
 import { ROUTES } from "../routes";
 
 /* Сайдбар — спец §4: три группы (Мониторинг / Управление / Панель).
@@ -28,31 +27,6 @@ const groups = [
     ["/account", "account", "◉"],
   ]],
 ];
-
-function ThemeSwitch() {
-  const { t } = useI18n();
-  const [theme, setTheme] = useTheme();
-  const opts = [
-    ["system", Monitor, t("themeSystem")],
-    ["light", Sun, t("themeLight")],
-    ["dark", Moon, t("themeDark")],
-  ];
-  return (
-    <span className="lang" role="group" aria-label={t("theme")}>
-      {opts.map(([value, Icon, label]) => (
-        <button
-          key={value}
-          type="button"
-          className={theme === value ? "on" : ""}
-          onClick={() => setTheme(value)}
-          aria-pressed={theme === value}
-          aria-label={label}
-          title={label}
-        ><Icon size={14} /></button>
-      ))}
-    </span>
-  );
-}
 
 export function Shell({ user, onOut }) {
   const { t } = useI18n();
@@ -106,7 +80,6 @@ export function Shell({ user, onOut }) {
           ))}
         </nav>
         <div className="who">
-          <ThemeSwitch />
           <LangSwitch />
           <span>{user}</span>
           <button className="ghost" onClick={logout}><LogOut size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />{t("logout")}</button>

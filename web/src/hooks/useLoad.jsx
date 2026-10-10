@@ -42,34 +42,3 @@ export function usePoll(fn, ms) {
   }, [ms]);
 }
 
-// Theme is module state: one source of truth for App (which applies it) and the switcher.
-const themeListeners = new Set();
-let themeValue = localStorage.getItem("dnsmarty-theme") || "system";
-
-function setThemeValue(next) {
-  themeValue = next;
-  localStorage.setItem("dnsmarty-theme", next);
-  applyTheme();
-  themeListeners.forEach((fn) => fn(next));
-}
-
-function applyTheme() {
-  const root = document.documentElement;
-  const dark = themeValue === "dark" || (themeValue === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  root.dataset.theme = dark ? "dark" : "light";
-}
-
-// Follow the OS setting while in "system" mode.
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  if (themeValue === "system") applyTheme();
-});
-applyTheme();
-
-export function useTheme() {
-  const [theme, setTheme] = useState(themeValue);
-  useEffect(() => {
-    themeListeners.add(setTheme);
-    return () => themeListeners.delete(setTheme);
-  }, []);
-  return [theme, setThemeValue];
-}
