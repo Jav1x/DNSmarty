@@ -76,8 +76,8 @@ function DataTable({ head, rows, empty, onRowClick, cells }) {
 // по path, так что смена окна или клиента подтягивает свежие данные.
 function ClientDrill({ ip, win, onClose }) {
   const { t } = useI18n();
-  const { data, error } = useLoad(clientStatsPath(ip, win));
-  const rows = data ? data.rows || [] : error ? [] : null;
+  const { data, loading, error } = useLoad(clientStatsPath(ip, win));
+  const rows = loading ? null : data ? data.rows || [] : error ? [] : null;
   return (
     <div className="drill">
       <div className="dhead">
@@ -104,7 +104,7 @@ export function Stats() {
   const [updatedAt, setUpdatedAt] = useState(null);
   const [agoSec, setAgoSec] = useState(0);
   const load = useLoad(statsPath(win));
-  const { data, error, reload } = load;
+  const { data, loading, error, reload } = load;
   usePoll(reload, POLL_MS);
   useEffect(() => {
     if (!data) return;
@@ -133,9 +133,9 @@ export function Stats() {
     openClient(ip);
   };
 
-  const domains = data ? data.domains || [] : error ? [] : null;
-  const clients = data ? data.clients || [] : error ? [] : null;
-  const proxy = data ? data.proxy || [] : error ? [] : null;
+  const domains = loading ? null : data ? data.domains || [] : error ? [] : null;
+  const clients = loading ? null : data ? data.clients || [] : error ? [] : null;
+  const proxy = loading ? null : data ? data.proxy || [] : error ? [] : null;
   const clientShare = shares((clients || []).map((c) => c.queries));
 
   return (
