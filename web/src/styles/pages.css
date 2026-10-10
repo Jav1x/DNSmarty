@@ -204,6 +204,12 @@
 .modal .check input[type="checkbox"] { accent-color: var(--accent); }
 .finput.search { width: 190px; } /* поиск по таблице нод (лаба 10) */
 
+/* ══ Статистика — ввод IP клиента и подсветка отказов (лаба 16) ════════════
+   Общие .win/.stats-grid/.drill/.bar/.share уже в ui.css; здесь — ширина поля
+   IP и красный для ячеек с отказами ACL (лаба держала это inline). */
+.finput.stats-ip { width: 180px; }
+td.hot { color: var(--danger); }
+
 /* ══ Ноды — визард «Новая нода» (лаба 10, mb2/pg1/pg2) ═════════════════════
    Общие классы (.sect/.tok/.copybtn/.frow3/.waitrow + keyframes waitsk) уже
    в ui.css; здесь — степпер, телеграм-стикер «связь» и мелочь, которую лаба

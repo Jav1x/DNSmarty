@@ -1,9 +1,24 @@
+// Статистика (лаба 16): пилюли окон 1ч/6ч/24ч/всё, карточки «Топ доменов» и
+// «Прокси · трафик по SNI» в сетке 1.25fr/1fr, «Клиенты» на всю ширину с
+// drill-down «Домены клиента {ip}» (клик по строке или прямой ввод IP).
+//
+// Контракт (проверен по internal/panel/server.go и api.go, все GET):
+//   GET /api/stats?window=1h|6h|24h|all → { window, domains:[{name,queries,acl,clients}],
+//                                            clients:[{ip,queries,acl}], proxy:[{name,sessions,bytes}] }
+//   GET /api/stats/client?ip=…&window=… → { rows:[{name,queries,acl}] }
+// statsWindow (api.go) принимает именно эти ключи окна; "all" = 0 (весь retention).
+// Ошибку неверного IP отдаёт сервер (400, field IP) — показываем через Err.
+//
+// usePoll(30 с) и тикер «N с назад» чистятся в cleanup своих эффектов;
+// у ClientDrill таймеров нет — только useLoad, который перезагружается по path.
 import { useEffect, useState } from "react";
 import { useLoad, usePoll } from "../hooks/useLoad";
 import { useI18n } from "../i18n";
-import { Err, EmptyRow, SkeletonRows } from "../components/Bits";
+import { EmptyRow, Err, SkeletonRows } from "../components/Bits";
+import { cleanClientIp, clientStatsPath, fmtBytes, shares, statsPath } from "../lib/util";
 
-// The window buttons mirror the backend: 1h/6h/24h windows and "all" (0, retention-bound).
+const POLL_MS = 30000;
+
 const WINDOWS = [
   ["1h", "window1h"],
   ["6h", "window6h"],
@@ -11,47 +26,44 @@ const WINDOWS = [
   ["all", "windowAll"],
 ];
 
-function formatBytes(n) {
-  if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB"];
-  let v = n;
-  for (const u of units) {
-    v /= 1024;
-    if (v < 1024) return `${v.toFixed(1)} ${u}`;
-  }
-  return `${(v / 1024).toFixed(1)} TB`;
-}
-
-function WindowSelector({ value, onPick }) {
+function WindowPills({ value, onPick }) {
   const { t } = useI18n();
   return (
-    <span className="lang" role="group" aria-label={t("window")}>
+    <span className="win" role="group" aria-label={t("window")}>
       {WINDOWS.map(([key, label]) => (
         <button
           key={key}
           type="button"
-          className={value === key ? "on" : ""}
-          onClick={() => onPick(key)}
+          className={`pill${value === key ? " on" : ""}`}
           aria-pressed={value === key}
+          onClick={() => onPick(key)}
         >{t(label)}</button>
       ))}
     </span>
   );
 }
 
-function StatTable({ cols, header, rows, empty, onRowClick, cells }) {
+// head: [{ label, sorted }]; rows: null — грузится (скелет), [] — пусто; cells(r, i): [{ v, cls }].
+function DataTable({ head, rows, empty, onRowClick, cells }) {
   return (
     <div className="table-wrap">
       <table>
         <thead>
-          <tr>{header.map((h, i) => <th key={i}>{h}</th>)}</tr>
+          <tr>
+            {head.map((h) => (
+              <th key={h.label}>
+                {h.label}
+                {h.sorted && <span className="ar"> ▾</span>}
+              </th>
+            ))}
+          </tr>
         </thead>
         <tbody>
-          {rows === null && <SkeletonRows cols={cols} />}
-          {rows !== null && !rows.length && <EmptyRow colSpan={cols}>{empty}</EmptyRow>}
+          {rows === null && <SkeletonRows cols={head.length} />}
+          {rows !== null && !rows.length && <EmptyRow colSpan={head.length}>{empty}</EmptyRow>}
           {rows?.map((r, i) => (
-            <tr key={i} className={onRowClick ? "click" : ""} onClick={onRowClick ? () => onRowClick(r) : undefined}>
-              {cells(r).map((cell, j) => <td key={j} className={cell.mono ? "mono" : ""}>{cell.v}</td>)}
+            <tr key={i} className={onRowClick ? "click" : undefined} onClick={onRowClick ? () => onRowClick(r) : undefined}>
+              {cells(r, i).map((c, j) => <td key={j} className={c.cls}>{c.v}</td>)}
             </tr>
           ))}
         </tbody>
@@ -60,103 +72,149 @@ function StatTable({ cols, header, rows, empty, onRowClick, cells }) {
   );
 }
 
-// Drill-down into one client's domains. Reloads on every ip/window change.
-// Mounted only with a non-empty ip, so useLoad always gets a valid path.
-export function ClientDomains({ ip, window: win, onClose }) {
+// Домены одного клиента. Монтируется только с непустым ip; useLoad перезагружает
+// по path, так что смена окна или клиента подтягивает свежие данные.
+function ClientDrill({ ip, win, onClose }) {
   const { t } = useI18n();
-  const load = useLoad(`/api/stats/client?ip=${encodeURIComponent(ip)}&window=${win}`);
-  const { data, error } = load;
-  const rows = data?.rows || null;
+  const { data, error } = useLoad(clientStatsPath(ip, win));
+  const rows = data ? data.rows || [] : error ? [] : null;
   return (
-    <section className="mod">
-      <div className="toolbar">
-        <h2>{t("clientDomains", { ip })}</h2>
-        <button type="button" className="ghost tiny" onClick={onClose}>{t("close")}</button>
+    <div className="drill">
+      <div className="dhead">
+        <b>{t("clientDomains", { ip })}</b>
+        <button type="button" className="btn ghost sm" onClick={onClose}>{t("close")}</button>
       </div>
-      {error && <Err text={error} />}
-      <StatTable
-        cols={3}
-        header={[t("domain"), t("queries"), t("aclCount")]}
+      <Err text={error} />
+      <DataTable
+        head={[{ label: t("domain") }, { label: t("queries"), sorted: true }, { label: t("blockedCol") }]}
         rows={rows}
         empty={t("noData")}
-        cells={(r) => [{ v: r.name, mono: true }, { v: r.queries }, { v: r.acl }]}
+        cells={(r) => [{ v: r.name }, { v: r.queries, cls: "num" }, { v: r.acl, cls: r.acl > 0 ? "hot" : undefined }]}
       />
-    </section>
+    </div>
   );
 }
 
 export function Stats() {
   const { t } = useI18n();
   const [win, setWin] = useState("24h");
-  const [picked, setPicked] = useState("");
-  // The drill-down opens on click; the input commits the typed ip on submit.
+  const [draft, setDraft] = useState("");
   const [selected, setSelected] = useState("");
+  const [ipMissing, setIpMissing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(null);
-  const load = useLoad(`/api/stats?window=${win}`);
+  const [agoSec, setAgoSec] = useState(0);
+  const load = useLoad(statsPath(win));
   const { data, error, reload } = load;
-  usePoll(reload, 30000);
-  useEffect(() => { setUpdatedAt(Date.now()); }, [data]);
+  usePoll(reload, POLL_MS);
+  useEffect(() => {
+    if (!data) return;
+    setUpdatedAt(Date.now());
+    setAgoSec(0);
+  }, [data]);
+  // Тикер держит «Обновлено N с назад» честным между опросами.
+  useEffect(() => {
+    if (updatedAt == null) return;
+    const timer = setInterval(() => setAgoSec(Math.round((Date.now() - updatedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [updatedAt]);
 
-  const pick = (key) => { setWin(key); setPicked(""); };
-  const openClient = (ip) => { setSelected(ip); setPicked(ip); };
-  const domains = data?.domains || null;
-  const clients = data?.clients || null;
-  const proxy = data?.proxy || null;
+  const openClient = (ip) => {
+    setDraft(ip);
+    setSelected(ip);
+    setIpMissing(false);
+  };
+  const submitIp = (e) => {
+    e.preventDefault();
+    const ip = cleanClientIp(draft);
+    if (!ip) {
+      setIpMissing(true);
+      return;
+    }
+    openClient(ip);
+  };
+
+  const domains = data ? data.domains || [] : error ? [] : null;
+  const clients = data ? data.clients || [] : error ? [] : null;
+  const proxy = data ? data.proxy || [] : error ? [] : null;
+  const clientShare = shares((clients || []).map((c) => c.queries));
+
   return (
     <>
-      <div className="toolbar">
-        <WindowSelector value={win} onPick={pick} />
-        <form
-          onSubmit={(e) => { e.preventDefault(); openClient(picked.trim()); }}
-          style={{ display: "flex", gap: 8 }}
-        >
-          <input
-            name="ip"
-            placeholder={t("clientIp")}
-            aria-label={t("clientIp")}
-            value={picked}
-            onChange={(e) => setPicked(e.target.value)}
-            style={{ maxWidth: 220 }}
-          />
-          <button type="submit" className="ghost">{t("show")}</button>
-        </form>
+      <div className="hrow">
+        <h1>{t("stats")}</h1>
+        <span className="toolbar">
+          <WindowPills value={win} onPick={setWin} />
+          <form className="toolbar" onSubmit={submitIp}>
+            <input
+              className="finput stats-ip"
+              name="ip"
+              placeholder={t("clientIp")}
+              aria-label={t("clientIp")}
+              value={draft}
+              onChange={(e) => { setDraft(e.target.value); setIpMissing(false); }}
+            />
+            <button type="submit" className="btn ghost sm">{t("show")}</button>
+          </form>
+        </span>
+        {updatedAt != null && (
+          <span className="crumb"><b>{t("updatedAgo", { n: agoSec })}</b></span>
+        )}
       </div>
       <Err text={error} />
-      {selected && <ClientDomains ip={selected} window={win} onClose={() => setSelected("")} />}
-      <section className="mod">
-        <div className="toolbar">
-          <h2>{t("topDomains")}</h2>
-          {updatedAt && <span className="count">{t("updatedAgo", { n: Math.round((Date.now() - updatedAt) / 1000) })}</span>}
+      {ipMissing && <div className="banner err">{t("clientIpEmpty")}</div>}
+
+      <div className="stats-grid">
+        <div className="card">
+          <h2>{t("topDomains")} <small>{t("byQueries")}</small></h2>
+          <DataTable
+            head={[{ label: t("domain") }, { label: t("queries"), sorted: true }, { label: t("blockedCol") }, { label: t("clientsCount") }]}
+            rows={domains}
+            empty={t("noData")}
+            cells={(r) => [
+              { v: r.name },
+              { v: r.queries, cls: "num" },
+              { v: r.acl, cls: r.acl > 0 ? "hot" : undefined },
+              { v: r.clients },
+            ]}
+          />
         </div>
-        <StatTable
-          cols={4}
-          header={[t("domain"), t("queries"), t("aclCount"), t("clientsCount")]}
-          rows={domains}
-          empty={t("noData")}
-          cells={(r) => [{ v: r.name, mono: true }, { v: r.queries }, { v: r.acl }, { v: r.clients }]}
-        />
-      </section>
-      <section className="mod">
-        <h2>{t("proxyByDomain")}</h2>
-        <StatTable
-          cols={3}
-          header={[t("domain"), t("sessionsCol"), t("bytesCol")]}
-          rows={proxy}
-          empty={t("noData")}
-          cells={(r) => [{ v: r.name, mono: true }, { v: r.sessions }, { v: formatBytes(r.bytes) }]}
-        />
-      </section>
-      <section className="mod">
-        <h2>{t("clientsCol")}</h2>
-        <StatTable
-          cols={3}
-          header={[t("clientIp"), t("queries"), t("aclCount")]}
-          rows={clients}
-          empty={t("noData")}
-          onRowClick={(r) => openClient(r.ip)}
-          cells={(r) => [{ v: r.ip, mono: true }, { v: r.queries }, { v: r.acl }]}
-        />
-      </section>
+        <div className="card">
+          <h2>{t("proxyByDomain")} <small>{t("sniTag")}</small></h2>
+          <DataTable
+            head={[{ label: t("domain") }, { label: t("sessionsCol") }, { label: t("bytesCol"), sorted: true }]}
+            rows={proxy}
+            empty={t("noData")}
+            cells={(r) => [{ v: r.name }, { v: r.sessions }, { v: fmtBytes(r.bytes), cls: "num" }]}
+          />
+        </div>
+        <div className="card full">
+          <h2>{t("clientsCol")} <small>{t("clientsHint")}</small></h2>
+          <DataTable
+            head={[{ label: t("clientIp") }, { label: t("queries"), sorted: true }, { label: t("blockedCol") }, { label: t("shareCol") }]}
+            rows={clients}
+            empty={t("noData")}
+            onRowClick={(r) => openClient(r.ip)}
+            cells={(r, i) => {
+              const pct = clientShare[i];
+              return [
+                { v: r.ip },
+                { v: r.queries, cls: "num" },
+                { v: r.acl, cls: r.acl > 0 ? "hot" : undefined },
+                {
+                  v: (
+                    <>
+                      <span className="share">{pct}%</span>
+                      <div className="bar"><div style={{ width: `${pct}%` }} /></div>
+                    </>
+                  ),
+                },
+              ];
+            }}
+          />
+          {selected && <ClientDrill ip={selected} win={win} onClose={() => setSelected("")} />}
+        </div>
+      </div>
+      <div className="hint">{t("statsHint")}</div>
     </>
   );
 }

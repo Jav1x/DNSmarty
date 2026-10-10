@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare } from './util'
+import { normFqdn, parseCidr, shares, fmtBytes, ago, protoOf, pushHist, sparkPaths, aclShare, statsPath, clientStatsPath, cleanClientIp } from './util'
 
 describe('normFqdn', () => {
   it('lowercases and trims trailing dot', () => expect(normFqdn(' Example.COM. ')).toBe('example.com'))
@@ -72,5 +72,22 @@ describe('aclShare', () => {
   it('no dns — no share, no NaN', () => {
     expect(aclShare([])).toBe(0)
     expect(aclShare([{ dns: 0, refused: 5 }])).toBe(0)
+  })
+})
+
+// Статистика (задача 10): адреса запросов и очистка ввода IP клиента.
+describe('statsPath', () => {
+  it('window only', () => expect(statsPath('1h')).toBe('/api/stats?window=1h'))
+  it('all window is the literal "all"', () => expect(statsPath('all')).toBe('/api/stats?window=all'))
+})
+describe('clientStatsPath', () => {
+  it('ipv4 with window', () => expect(clientStatsPath('192.168.1.4', '6h')).toBe('/api/stats/client?ip=192.168.1.4&window=6h'))
+  it('ipv6 colons are encoded', () => expect(clientStatsPath('2001:db8::1', '24h')).toBe('/api/stats/client?ip=2001%3Adb8%3A%3A1&window=24h'))
+})
+describe('cleanClientIp', () => {
+  it('trims spaces', () => expect(cleanClientIp('  10.40.12.7 ')).toBe('10.40.12.7'))
+  it('empty and null give empty string', () => {
+    expect(cleanClientIp('   ')).toBe('')
+    expect(cleanClientIp(null)).toBe('')
   })
 })

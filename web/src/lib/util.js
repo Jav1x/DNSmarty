@@ -89,3 +89,20 @@ export function aclShare(points) {
   if (!dns) return 0;
   return (points.reduce((a, p) => a + (p.refused || 0), 0) / dns) * 100;
 }
+
+// Статистика (задача 10): адреса GET /api/stats и GET /api/stats/client.
+// window — ключ пилюли: "1h" | "6h" | "24h" | "all" (сервер принимает их как есть).
+export function statsPath(win) {
+  return `/api/stats?window=${win}`;
+}
+
+// Drill-down клиента: ip кодируется (у IPv6 есть двоеточия), window — тот же ключ.
+export function clientStatsPath(ip, win) {
+  return `/api/stats/client?ip=${encodeURIComponent(ip)}&window=${win}`;
+}
+
+// Минимальная очистка ввода IP: пробелы по краям; пустая строка — «не введено».
+// Формат проверяет сервер (netip.ParseAddr) и отдаёт ошибку через Err.
+export function cleanClientIp(s) {
+  return String(s ?? "").trim();
+}
