@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -101,10 +102,26 @@ func (s *Server) syncNode(ctx context.Context, id string) error {
 		s.markUnreachable(ctx, id, err)
 		return err
 	}
+	s.storeHW(ctx, id, stats.HW)
 	if err := s.storeStats(ctx, n, stats); err != nil {
 		s.log.Warn("stats", "node", n.Name, "err", err)
 	}
 	return s.store.SetReachable(ctx, id, version, health.Version)
+}
+
+func (s *Server) storeHW(ctx context.Context, id string, hw *agent.HW) {
+	var raw json.RawMessage
+	if hw != nil {
+		b, err := json.Marshal(hw)
+		if err != nil {
+			s.log.Warn("hw", "node", id, "err", err)
+			return
+		}
+		raw = b
+	}
+	if err := s.store.SetNodeHW(ctx, id, raw); err != nil {
+		s.log.Warn("hw", "node", id, "err", err)
+	}
 }
 
 // markUnreachable records the error even when ctx has already expired.

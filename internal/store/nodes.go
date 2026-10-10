@@ -16,19 +16,20 @@ import (
 )
 
 type Node struct {
-	ID            string     `json:"id"`
-	Role          string     `json:"role"`
-	Name          string     `json:"name"`
-	PublicIPv4    string     `json:"public_ipv4"`
-	PublicIPv6    string     `json:"public_ipv6"`
-	Region        string     `json:"region"`
-	Enabled       bool       `json:"enabled"`
-	ConfigVersion int64      `json:"config_version"`
-	LastSeen      *time.Time `json:"last_seen_at"`
-	AgentHost     string     `json:"agent_host"`
-	AgentPort     int        `json:"agent_port"`
-	LastError     string     `json:"last_error"`
-	AgentVersion  string     `json:"agent_version"`
+	ID            string          `json:"id"`
+	Role          string          `json:"role"`
+	Name          string          `json:"name"`
+	PublicIPv4    string          `json:"public_ipv4"`
+	PublicIPv6    string          `json:"public_ipv6"`
+	Region        string          `json:"region"`
+	Enabled       bool            `json:"enabled"`
+	ConfigVersion int64           `json:"config_version"`
+	LastSeen      *time.Time      `json:"last_seen_at"`
+	AgentHost     string          `json:"agent_host"`
+	AgentPort     int             `json:"agent_port"`
+	LastError     string          `json:"last_error"`
+	AgentVersion  string          `json:"agent_version"`
+	LastHW        json.RawMessage `json:"last_hw"`
 	// Fresh: enabled and heard from within the live window.
 	Fresh bool `json:"fresh"`
 }
@@ -66,7 +67,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 		SELECT id::text, role, name,
 		       coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), ''),
 		       region, enabled, config_version, last_seen_at,
-		       agent_host, agent_port, last_error, agent_version, `+nodeFresh+`
+		       agent_host, agent_port, last_error, agent_version, coalesce(last_hw::text, 'null'), `+nodeFresh+`
 		FROM node
 		ORDER BY role, name
 	`)
@@ -77,9 +78,11 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 	var out []Node
 	for rows.Next() {
 		var n Node
-		if err := rows.Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion, &n.Fresh); err != nil {
+		var hw string
+		if err := rows.Scan(&n.ID, &n.Role, &n.Name, &n.PublicIPv4, &n.PublicIPv6, &n.Region, &n.Enabled, &n.ConfigVersion, &n.LastSeen, &n.AgentHost, &n.AgentPort, &n.LastError, &n.AgentVersion, &hw, &n.Fresh); err != nil {
 			return nil, err
 		}
+		n.LastHW = json.RawMessage(hw)
 		out = append(out, n)
 	}
 	if out == nil {
@@ -179,6 +182,16 @@ func (s *Store) NodeKey(ctx context.Context, id string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: ключ", ErrNotFound)
 	}
 	return s.open(nonce, ct)
+}
+
+// SetNodeHW stores the hardware snapshot; an empty raw clears it to NULL.
+func (s *Store) SetNodeHW(ctx context.Context, nodeID string, raw json.RawMessage) error {
+	var v any
+	if len(raw) > 0 {
+		v = []byte(raw)
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE node SET last_hw = $2 WHERE id = $1`, nodeID, v)
+	return err
 }
 
 func (s *Store) SetReachable(ctx context.Context, id string, version int64, agentVersion string) error {

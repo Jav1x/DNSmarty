@@ -176,6 +176,7 @@ func (p *Pool) Push(ctx context.Context, t Target, body any) error {
 type StatsBody struct {
 	Hits     []dns.Hit      `json:"hits"`
 	Sessions []proxy.Report `json:"sessions"`
+	HW       *HW            `json:"hw"`
 }
 
 func (p *Pool) FetchStats(ctx context.Context, t Target) (StatsBody, error) {
