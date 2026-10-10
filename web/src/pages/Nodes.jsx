@@ -7,9 +7,9 @@
 // Сетевой контракт прежний: GET /api/nodes; POST /api/nodes; POST /api/nodes/{id}
 // (обновление, принимает enabled:false; верб — POST, бриф говорил PUT, но маршрута
 // PUT в серверной таблице нет — закреплено тестом internal/integration/node_disable_test.go);
-// POST /api/nodes/{id}/connect (проверка связи, {ok, error} — сигнатура для
-// визарда задачи 8); POST /api/nodes/{id}/key; DELETE /api/nodes/{id}.
-// Визард «Новая нода» по лабе — задача 8; здесь рабочий краткий вариант.
+// POST /api/nodes/{id}/connect (проверка связи, {ok, error}); POST
+// /api/nodes/{id}/key; DELETE /api/nodes/{id}.
+// Визард «Новая нода» — web/src/pages/nodes/NewNodeModal.jsx (задача 8).
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useLoad } from "../hooks/useLoad";
@@ -22,6 +22,7 @@ import Switch from "../ui/Switch";
 import Tip from "../ui/Tip";
 import TrashButton from "../ui/TrashButton";
 import { ago } from "../lib/util";
+import NewNodeModal from "./nodes/NewNodeModal.jsx";
 
 // NodeInput из строки сервера (+ явная замена enabled для bulk-операций).
 // Обновление принимает только полное тело — шлём все поля ноды.
@@ -38,25 +39,9 @@ function nodeInput(n, enabled) {
   };
 }
 
-// Проверка связи — сигнатура остаётся для визарда задачи 8 (ok/error из лабы).
-export function nodeConnect(id) {
+// Проверка связи (ok/error из лабы); вызывается строкой ⟳ и модалкой редактирования.
+function nodeConnect(id) {
   return api(`/api/nodes/${id}/connect`, { method: "POST" });
-}
-
-export { nodeInput };
-
-// FormData формы создания → NodeInput (из старого UI, контракт не менялся).
-function nodeBody(form) {
-  return {
-    name: form.get("name"),
-    role: form.get("role"),
-    public_ipv4: form.get("public_ipv4") || "",
-    public_ipv6: form.get("public_ipv6") || "",
-    region: form.get("region") || "",
-    agent_host: form.get("agent_host"),
-    agent_port: Number(form.get("agent_port")),
-    enabled: form.get("enabled") === "on",
-  };
 }
 
 export function Nodes() {
@@ -282,7 +267,7 @@ export function Nodes() {
         />
       )}
       {open?.kind === "new" && (
-        <NewNodeModal onClose={() => setOpen(null)} reload={reload} setError={setError} />
+        <NewNodeModal nodes={nodes} onClose={() => setOpen(null)} reload={reload} setError={setError} />
       )}
     </>
   );
@@ -496,154 +481,3 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
   );
 }
 
-/* Краткий визард создания (задача 8 заменит лабовым со стикером связи):
-   адрес → ключ и скрипт → проверка связи. */
-function NewNodeModal({ onClose, reload, setError }) {
-  const { t, err } = useI18n();
-  const [step, setStep] = useState(0);
-  const [created, setCreated] = useState(null);
-  const [connect, setConnect] = useState(null);
-  const [copied, setCopied] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function copyText(label, text) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(label);
-      setTimeout(() => setCopied(""), 1400);
-    } catch { /* нет clipboard — текст остаётся виден в .tok */ }
-  }
-  async function create(event) {
-    event.preventDefault();
-    if (busy) return;
-    setBusy(true);
-    try {
-      const out = await api("/api/nodes", { method: "POST", body: JSON.stringify(nodeBody(new FormData(event.target))) });
-      setCreated(out);
-      setConnect(null);
-      setStep(1);
-      reload();
-    } catch (e) { setError(e); }
-    finally { setBusy(false); }
-  }
-  async function check() {
-    if (busy || !created) return;
-    setBusy(true);
-    try {
-      const out = await nodeConnect(created.node.id);
-      setConnect(out);
-      setStep(2);
-      reload();
-    } catch (e) { setError(e); }
-    finally { setBusy(false); }
-  }
-  const install = created
-    ? `dnsmarty-node install --role ${created.node.role} --key ${created.key} --port ${created.node.agent_port}`
-    : "";
-
-  const steps = [t("stepAddr"), t("stepKey"), t("stepLink")];
-  return (
-    <Modal open onClose={onClose} width={640} title={t("newNode")}>
-      <div className="stepper">
-        {steps.map((label, i) => (
-          <span key={label} className={`step${i === step ? " on" : i < step ? " done" : ""}`}><b>{i < step ? "✓" : i + 1}</b>{label}</span>
-        ))}
-      </div>
-      {step === 0 && (
-        <form onSubmit={create}>
-          <section className="sect">
-            <h3>{t("stepAddr")}<small>{t("nodeHint")}</small></h3>
-            <div className="sbody f">
-              <NodeNewFields />
-            </div>
-          </section>
-          <div className="mfoot">
-            <span />
-            <div className="mbtns">
-              <button type="button" className="btn ghost" onClick={onClose}>{t("cancel")}</button>
-              <button type="submit" className="btn" disabled={busy}>{t("next")}</button>
-            </div>
-          </div>
-        </form>
-      )}
-      {step === 1 && created && (
-        <section className="sect">
-          <h3>{t("stepKey")}<small>{t("keySectSub")}</small></h3>
-          <div className="sbody f">
-            <div className="tok">
-              {created.key}{" "}
-              <button type="button" className="copybtn" onClick={() => copyText("key", created.key)}>
-                {copied === "key" ? t("copied") : t("copy")}
-              </button>
-            </div>
-            <div>
-              <div className="hint">{t("scriptHint", { port: created.node.agent_port })}</div>
-              <pre className="banner note" style={{ marginTop: 8 }}>{install}</pre>
-              <button type="button" className="copybtn" onClick={() => copyText("cmd", install)}>
-                {copied === "cmd" ? t("copied") : t("copy")}
-              </button>{" "}
-              <a href="/install/node.sh">{t("downloadScript")}</a>
-            </div>
-          </div>
-          <div className="mfoot">
-            <span />
-            <div className="mbtns">
-              <button type="button" className="btn ghost" onClick={onClose}>{t("cancel")}</button>
-              <button type="button" className="btn" onClick={check} disabled={busy}>{t("checkLink")}</button>
-            </div>
-          </div>
-        </section>
-      )}
-      {step === 2 && connect && (
-        <>
-          <section className="sect">
-            <h3>{t("stepLink")}</h3>
-            <div className="sbody">
-              {connect.ok
-                ? <div className="banner ok">{t("linked")}</div>
-                : <div className="banner err">{t("notLinked", { error: err(connect.error) })}</div>}
-            </div>
-          </section>
-          <div className="mfoot">
-            <span />
-            <div className="mbtns">
-              {!connect.ok && <button type="button" className="btn ghost sm" onClick={check} disabled={busy}>{t("checkLink")}</button>}
-              <button type="button" className="btn" onClick={onClose}>{t("close")}</button>
-            </div>
-          </div>
-        </>
-      )}
-    </Modal>
-  );
-}
-
-/* Поля формы создания: те же NodeInput, что и в модалке редактирования.
-   Порт по умолчанию — по роли, как в dnsmarty-node.sh (dns → 9443, proxy → 9444)
-   и в прежнем UI; роль управляемая, смена роли подставляет её порт по умолчанию. */
-function NodeNewFields() {
-  const { t } = useI18n();
-  const [role, setRole] = useState("dns");
-  return (
-    <>
-      <div className="frow">
-        <div><label htmlFor="nn-name">{t("name")}</label><input id="nn-name" name="name" required /></div>
-        <div><label htmlFor="nn-role">{t("role")}</label>
-          <select id="nn-role" name="role" value={role} onChange={(e) => setRole(e.target.value)}><option value="dns">dns</option><option value="proxy">proxy</option></select>
-        </div>
-      </div>
-      <div className="frow">
-        <div><label htmlFor="nn-v4">{t("ipv4")}</label><input id="nn-v4" name="public_ipv4" placeholder="198.51.100.10" spellCheck={false} /></div>
-        <div><label htmlFor="nn-v6">{t("ipv6")}</label><input id="nn-v6" name="public_ipv6" placeholder="2001:db8::10" spellCheck={false} /></div>
-      </div>
-      <div className="frow3">
-        <div><label htmlFor="nn-region">{t("region")}</label><input id="nn-region" name="region" /></div>
-        <div><label htmlFor="nn-host">{t("agentHost")}</label><input id="nn-host" name="agent_host" required /></div>
-        <div><label htmlFor="nn-port">{t("agentPort")}</label><input id="nn-port" name="agent_port" key={role} defaultValue={role === "dns" ? "9443" : "9444"} required /></div>
-      </div>
-      <div className="check">
-        <input type="checkbox" id="nn-enabled" name="enabled" defaultChecked />
-        <label htmlFor="nn-enabled" style={{ margin: 0 }}>{t("inRotation")}</label>
-      </div>
-    </>
-  );
-}

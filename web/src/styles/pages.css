@@ -200,6 +200,70 @@
 .modal .check input[type="checkbox"] { accent-color: var(--accent); }
 .finput.search { width: 190px; } /* поиск по таблице нод (лаба 10) */
 
+/* ══ Ноды — визард «Новая нода» (лаба 10, mb2/pg1/pg2) ═════════════════════
+   Общие классы (.sect/.tok/.copybtn/.frow3/.waitrow + keyframes waitsk) уже
+   в ui.css; здесь — степпер, телеграм-стикер «связь» и мелочь, которую лаба
+   держала inline (правая половина ток-строки, центрирование экрана связи).
+   Степпер у нас — индикатор (span), а не кнопки-переключатели страниц лабы:
+   перескок назад при живом цикле опроса оставил бы интервал болтаться. */
+.stepper { display: flex; gap: 7px; flex-wrap: wrap; padding: 13px 22px 0; }
+.step { font-family: var(--mono); font-size: 10.5px; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 13px; display: flex; gap: 8px; align-items: center;
+  transition: color .15s, border-color .15s, background .15s; }
+.step .n { width: 15px; height: 15px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 9px; border: 1px solid var(--border); transition: all .15s; }
+.step.on { color: var(--accent); border-color: rgba(62,199,255,.4); background: rgba(62,199,255,.07); }
+.step.on .n { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+.step.done { color: var(--ok); border-color: rgba(126,226,168,.3); }
+.step.done .n { color: var(--ok); border-color: rgba(126,226,168,.4); }
+.starrow { align-self: center; color: rgba(139,153,168,.35); font-size: 10px; }
+/* ток ключа на экране 1 (лаба — inline-стили): flex-строка ключ + «показан
+   один раз» + копировать; янтарная рамка предупреждает о разовом показе */
+.nn-tok { display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  border-color: rgba(255,197,61,.25); font-size: 13px; }
+.nn-tokside { display: flex; gap: 8px; align-items: center; flex: none; }
+.nn-once { color: var(--warn); font-size: 10px; white-space: nowrap; }
+.nn-later { color: var(--muted); } /* заглушка до создания: ключа ещё нет */
+.nn-lead { font-family: var(--mono); font-size: 10.5px; color: var(--muted); font-weight: 400; }
+.nn-center { text-align: center; }
+.nn-wait { justify-content: center; }
+.nn-try b { color: var(--accent); font-weight: 500; }
+.nn-done b { color: var(--ok); font-weight: 500; }
+/* стикер «связь» — блок лабы 1:1: парящая серверная стойка с лампой, сонарные
+   кольца-ping, орбитальная точка; .done гасит анимации и ставит зелёную ✓ */
+.stick { position: relative; height: 190px; display: grid; place-items: center; overflow: hidden; }
+.srv { width: 76px; height: 92px; border-radius: 16px; position: relative;
+  background: linear-gradient(180deg, #13233a, #0b1522); border: 1px solid rgba(62,199,255,.3);
+  display: flex; flex-direction: column; gap: 9px; align-items: center; justify-content: center;
+  box-shadow: 0 14px 34px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
+  animation: srvfloat 2.8s ease-in-out infinite; }
+.srv i { display: block; width: 42px; height: 6px; border-radius: 3px; background: rgba(62,199,255,.35); }
+.srv i:nth-child(2) { width: 28px; background: rgba(62,199,255,.22); }
+.srv .lamp { position: absolute; top: 10px; right: 11px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--warn); box-shadow: 0 0 10px rgba(255,197,61,.7); animation: waitsk 1.2s infinite; }
+.srv .lbl { position: absolute; bottom: -22px; font-family: var(--mono); font-size: 9.5px;
+  letter-spacing: .14em; color: var(--muted); text-transform: uppercase; }
+@keyframes srvfloat { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
+.ping { position: absolute; width: 76px; height: 92px; border-radius: 16px;
+  border: 1px solid rgba(62,199,255,.4); opacity: 0; animation: ping 2.1s ease-out infinite; }
+.ping.d2 { animation-delay: .7s; }
+.ping.d3 { animation-delay: 1.4s; }
+@keyframes ping { 0% { transform: scale(1); opacity: .5 } 100% { transform: scale(2); opacity: 0 } }
+.orb { position: absolute; top: 50%; left: 50%; width: 158px; height: 158px; margin: -79px 0 0 -79px;
+  border-radius: 50%; border: 1px dashed rgba(62,199,255,.3); animation: orb 3.2s linear infinite; }
+.orb::after { content: ""; position: absolute; top: -5px; left: 50%; margin-left: -5px;
+  width: 9px; height: 9px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 12px rgba(62,199,255,.9); }
+@keyframes orb { from { transform: rotate(0) } to { transform: rotate(360deg) } }
+.tick { position: absolute; bottom: 22px; right: 34px; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--ok); color: #04220f; display: grid; place-items: center; font-size: 17px; font-weight: 800;
+  opacity: 0; transform: scale(.3); transition: all .3s cubic-bezier(.2, 1.7, .4, 1);
+  box-shadow: 0 6px 18px rgba(60,230,180,.35); }
+.stick.done .ping, .stick.done .orb { display: none; }
+.stick.done .srv { animation: none; }
+.stick.done .srv .lamp { background: var(--ok); box-shadow: 0 0 10px rgba(60,230,180,.8); animation: none; }
+.stick.done .tick { opacity: 1; transform: scale(1); }
+
 
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }
