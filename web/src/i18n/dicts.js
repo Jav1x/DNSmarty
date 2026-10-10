@@ -1070,7 +1070,7 @@ export const phrases = {
     "Wrong username or password.": "Неверный логин или пароль.",
     "Session was not created.": "Сессия не создана.",
     "Sign in required.": "Нужен вход.",
-    "The key does not match.": "Ключ не совпал.",
+    "key does not match": "Ключ не совпал.",
     "The overview could not be loaded.": "Сводка не собралась.",
     "The node list could not be read.": "Список узлов не прочитан.",
     "The domain list could not be read.": "Список доменов не прочитан.",

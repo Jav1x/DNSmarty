@@ -448,7 +448,12 @@ func (e *Engine) exchangeDoH(q *mdns.Msg, endpoint string) (*mdns.Msg, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := e.doh.Post(endpoint, "application/dns-message", bytes.NewReader(wire))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, bytes.NewReader(wire))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	resp, err := e.doh.Do(req)
 	if err != nil {
 		return nil, err
 	}

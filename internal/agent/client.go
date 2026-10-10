@@ -119,7 +119,7 @@ func (p *Pool) do(ctx context.Context, t Target, method, path string, body []byt
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Cannot reach %s: %w", t.addr(), err)
+		return nil, fmt.Errorf("cannot reach %s: %w", t.addr(), err)
 	}
 	return resp, nil
 }

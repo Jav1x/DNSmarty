@@ -37,7 +37,7 @@ export function I18nProvider({ children }) {
     }
     const exact = dictPhrases[lang][message];
     if (exact) return exact;
-    const reach = message.match(/^Cannot reach (.+)$/);
+    const reach = message.match(/^cannot reach (.+)$/);
     if (reach) return t("errReach", { host: reach[1] });
     const field = message.match(/^Check the field: (.+)$/);
     if (field) {

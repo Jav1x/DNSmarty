@@ -168,8 +168,8 @@ func TestTOTPLogin(t *testing.T) {
 		t.Fatalf("backup code: %d %s", status, raw)
 	}
 	status, raw, _ = postJSON(t, ts.URL+"/api/login", `{"username":"admin","password":"panel-pass-long"}`)
-	if err := json.Unmarshal(raw, &challenge); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(raw, &challenge); err != nil || status != http.StatusOK {
+		t.Fatalf("sign-in before reuse: %d %s", status, raw)
 	}
 	status, _, _ = postJSON(t, ts.URL+"/api/login/totp", `{"ticket":"`+challenge.Ticket+`","code":"`+backup+`"}`)
 	if status != http.StatusUnauthorized {

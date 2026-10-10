@@ -91,7 +91,7 @@ func pin(want *ecdsa.PublicKey) func(tls.ConnectionState) error {
 		}
 		got, ok := cs.PeerCertificates[0].PublicKey.(*ecdsa.PublicKey)
 		if !ok || !got.Equal(want) {
-			return errors.New("The key does not match.")
+			return errors.New("key does not match")
 		}
 		return nil
 	}
