@@ -51,7 +51,7 @@ function Tile({ title, children }) {
 // (fresh/enabled/last_seen_at) — долей и трафика по нодам в контракте нет.
 function NodeTileRow({ n }) {
   const { t } = useI18n();
-  const offline = n.last_seen_at ? `${t("noLink")} · ${ago(n.last_seen_at)}` : t("noLink");
+  const offline = n.last_seen_at ? `${t("noLink")} · ${ago(n.last_seen_at, t)}` : t("noLink");
   const status = !n.enabled ? t("nodeOff") : n.fresh ? t("inRotation") : offline;
   return (
     <div className="row">
@@ -81,15 +81,16 @@ export function Overview() {
     }, 1000);
     return () => clearInterval(timer);
   }, [updatedAt]);
-  // Скользящая история спарклайнов: новая точка на каждый опрос (N≈30).
+  // Скользящая история спарклайнов: одна точка на опрос (N≈30). Триггер —
+  // updatedAt, он ставится после Promise.all, значит load/series уже свежие.
   useEffect(() => {
-    if (!load.data) return;
+    if (updatedAt == null || !load.data) return;
     const share = series.data ? aclShare(series.data.points || []) : null;
     setHist((h) => ({
       qps: pushHist(h.qps, load.data.overview?.qps || 0, HIST_N),
       blocked: share === null ? h.blocked : pushHist(h.blocked, share, HIST_N),
     }));
-  }, [load.data, series.data]);
+  }, [updatedAt]);
   if (!load.data) return <div className="mod"><Err text={load.error} />{!load.error && <SkeletonRows cols={5} />}</div>;
 
   const o = load.data.overview;
@@ -101,7 +102,6 @@ export function Overview() {
   const dnsNodes = nodes.filter((n) => n.role === "dns");
   const proxyNodes = nodes.filter((n) => n.role === "proxy");
   const domains = stats.data?.domains || [];
-  const totalQ = domains.reduce((a, d) => a + d.queries, 0);
   const domainShare = shares(domains.map((d) => d.queries));
   const num = (n) => Number(n).toLocaleString();
   return (
@@ -164,7 +164,7 @@ export function Overview() {
               <tr key={d.name}>
                 <td>{d.name}</td>
                 <td className="num">{num(d.queries)}</td>
-                <td className={d.acl ? "num" : ""} style={d.acl ? { color: "var(--danger)" } : undefined}>{num(d.acl)}</td>
+                <td className="num" style={d.acl ? { color: "var(--danger)" } : undefined}>{num(d.acl)}</td>
                 <td>
                   <span className="share">{domainShare[i]}%</span>
                   <div className="bar"><div style={{ width: `${domainShare[i]}%` }} /></div>

@@ -188,7 +188,7 @@ export function Nodes() {
               {loading && !data && <SkeletonRows cols={12} />}
               {data !== null && list.map((n) => {
                 const st = statusOf(n, t, err);
-                const seen = n.last_seen_at ? ago(n.last_seen_at) : "—";
+                const seen = n.last_seen_at ? ago(n.last_seen_at, t) : "—";
                 return (
                   <tr
                     key={n.id}
@@ -277,7 +277,7 @@ export function Nodes() {
 // уставший агент — янтарная, потерянная связь — красная, отключённая — серая.
 function statusOf(n, t, err) {
   if (!n.enabled) return { lamp: "dis", tip: t("disLampTip") };
-  const seen = n.last_seen_at ? ago(n.last_seen_at) : "—";
+  const seen = n.last_seen_at ? ago(n.last_seen_at, t) : "—";
   if (n.fresh) {
     return {
       lamp: n.needs_update ? "warn" : "on",
@@ -360,7 +360,7 @@ function EditNodeModal({ node, onClose, onSaved, setError, ask, toast }) {
     } catch { /* нет clipboard — ключ остаётся виден в .tok */ }
   }
 
-  const seen = node.last_seen_at ? ago(node.last_seen_at) : "—";
+  const seen = node.last_seen_at ? ago(node.last_seen_at, t) : "—";
   const st = statusOf(node, t, err);
   const stateText = !node.enabled
     ? t("rotDis")

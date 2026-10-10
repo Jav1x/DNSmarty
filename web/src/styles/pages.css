@@ -208,7 +208,7 @@
    Общие .win/.stats-grid/.drill/.bar/.share уже в ui.css; здесь — ширина поля
    IP и красный для ячеек с отказами ACL (лаба держала это inline). */
 .finput.stats-ip { width: 180px; }
-td.hot { color: var(--danger); }
+.stats-grid td.hot { color: var(--danger); }
 
 /* ══ Аккаунт — профиль-банд и парольная форма (лаба 14) ════════════════════
    Общие классы (.hero.acc/.avatar/.role/.hstats/.strength/.stlbl/.dev/.curtag/

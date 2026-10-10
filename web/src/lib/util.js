@@ -50,15 +50,16 @@ export function protoOf(addr) {
   return 'udp';
 }
 
-// Русские короткие формы: «12 с», «3 мин», «2 ч», «27 д».
-export function ago(iso) {
+// Короткие формы «12 s» / «12 с»: единицы — сокращения, не склоняются, поэтому
+// плюрал-функции не нужны; t передаётся аргументом (модуль вне React).
+export function ago(iso, t) {
   const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (sec < 60) return `${sec} с`;
+  if (sec < 60) return t("agoSec", { n: sec });
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} мин`;
+  if (min < 60) return t("agoMin", { n: min });
   const h = Math.floor(min / 60);
-  if (h < 24) return `${h} ч`;
-  return `${Math.floor(h / 24)} д`;
+  if (h < 24) return t("agoHour", { n: h });
+  return t("agoDay", { n: Math.floor(h / 24) });
 }
 
 // Обзор (лаба 16): скользящий буфер живых спарклайнов hero-банда —

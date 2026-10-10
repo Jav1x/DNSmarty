@@ -35,6 +35,8 @@ const ACT_KEYS = {
   "login.fail": "actLoginFail",
   "logout": "actLogout",
   "node.check": "actNodeCheck",
+  "session.revoke": "actSessionRevoke",
+  "password.change": "actPasswordChange",
 };
 
 // Лампа-точка строки активности: вход — зелёная, отказ входа — красная,
@@ -225,7 +227,7 @@ export function Account() {
                   </td>
                   <td className="mono">{s.ip || "—"}</td>
                   <td>{new Date(s.created_at).toLocaleString()}</td>
-                  <td className="rel">{s.last_seen_at ? ago(s.last_seen_at) : "—"}</td>
+                  <td className="rel">{s.last_seen_at ? ago(s.last_seen_at, t) : "—"}</td>
                   <td className="rel">{new Date(s.expires_at).toLocaleString()}</td>
                   <td>
                     {s.current
@@ -266,7 +268,7 @@ export function Account() {
             const pairs = auditDetail(r.action, r.detail);
             return (
               <div className="arow" key={r.id}>
-                <span className="at">{ago(r.at)}</span>
+                <span className="at">{ago(r.at, t)}</span>
                 <span className={`ai ${actDot(r.action)}`} aria-hidden="true" />
                 <span className="aa">
                   <b>{ACT_KEYS[r.action] ? t(ACT_KEYS[r.action]) : r.action}</b>{" "}

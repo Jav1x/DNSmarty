@@ -6,7 +6,7 @@
 //   GET /api/stats?window=1h|6h|24h|all → { window, domains:[{name,queries,acl,clients}],
 //                                            clients:[{ip,queries,acl}], proxy:[{name,sessions,bytes}] }
 //   GET /api/stats/client?ip=…&window=… → { rows:[{name,queries,acl}] }
-// statsWindow (api.go) принимает именно эти ключи окна; "all" = 0 (весь retention).
+// window: 1h | 6h | 24h | all; all — весь retention.
 // Ошибку неверного IP отдаёт сервер (400, field IP) — показываем через Err.
 //
 // usePoll(30 с) и тикер «N с назад» чистятся в cleanup своих эффектов;
@@ -118,6 +118,11 @@ export function Stats() {
     return () => clearInterval(timer);
   }, [updatedAt]);
 
+  // drill закрывается при смене окна: его строки относятся к прежнему окну.
+  const pickWindow = (w) => {
+    setWin(w);
+    setSelected("");
+  };
   const openClient = (ip) => {
     setDraft(ip);
     setSelected(ip);
@@ -143,7 +148,7 @@ export function Stats() {
       <div className="hrow">
         <h1>{t("stats")}</h1>
         <span className="toolbar">
-          <WindowPills value={win} onPick={setWin} />
+          <WindowPills value={win} onPick={pickWindow} />
           <form className="toolbar" onSubmit={submitIp}>
             <input
               className="finput stats-ip"

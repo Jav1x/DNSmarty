@@ -30,8 +30,9 @@ describe('protoOf', () => {
   it('case-insensitive scheme', () => expect(protoOf('HTTPS://dns.google/dns-query')).toBe('doh'))
 })
 describe('ago', () => {
-  it('seconds', () => expect(ago(new Date(Date.now()-12000).toISOString())).toBe('12 с'))
-  it('minutes', () => expect(ago(new Date(Date.now()-26*60000).toISOString())).toBe('26 мин'))
+  const tRu = (k, { n }) => ({ agoSec: `${n} с`, agoMin: `${n} мин`, agoHour: `${n} ч`, agoDay: `${n} д` })[k]
+  it('seconds', () => expect(ago(new Date(Date.now()-12000).toISOString(), tRu)).toBe('12 с'))
+  it('minutes', () => expect(ago(new Date(Date.now()-26*60000).toISOString(), tRu)).toBe('26 мин'))
 })
 // lab16 обзор: живые спарклайны hero-банда (задача 9).
 describe('pushHist', () => {
