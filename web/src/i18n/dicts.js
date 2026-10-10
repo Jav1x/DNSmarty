@@ -1,3 +1,11 @@
+const ruPlural = (n, one, few, many) => {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+};
+
 export const dict = {
   en: {
     account: "Account",
@@ -236,7 +244,7 @@ export const dict = {
     prev: "Previous",
     nextPage: "Next",
     edit: "Edit",
-    domainCount: "{n} domains",
+    domainCount: (v) => `${v.n} ${v.n === 1 ? "domain" : "domains"}`,
     tplSummary: "template: {name} · {count} domains",
     weight: "weight",
     disable: "Disable",
@@ -248,7 +256,7 @@ export const dict = {
     blankService: "Blank service",
     pasteDomains: "Paste domains, separated by spaces, commas or new lines",
     addDomains: "Add domains",
-    serviceQueries: "{n} queries (24h)",
+    serviceQueries: (v) => `${v.n} ${v.n === 1 ? "query" : "queries"} (24h)`,
     fqdnTooLong: "longer than 253 characters",
     seedHint: "The only seeded name is example.com. No third-party lists are built in.",
     match: "Match",
@@ -657,7 +665,7 @@ export const dict = {
     prev: "Назад",
     nextPage: "Дальше",
     edit: "Править",
-    domainCount: "{n} доменов",
+    domainCount: (v) => `${v.n} ${ruPlural(v.n, "домен", "домена", "доменов")}`,
     tplSummary: "шаблон: {name} · {count} доменов",
     weight: "вес",
     disable: "Выключить",
@@ -669,7 +677,7 @@ export const dict = {
     blankService: "Пустой сервис",
     pasteDomains: "Вставьте домены через пробел, запятую или с новой строки",
     addDomains: "Добавить домены",
-    serviceQueries: "{n} запросов (24ч)",
+    serviceQueries: (v) => `${v.n} ${ruPlural(v.n, "запрос", "запроса", "запросов")} (24ч)`,
     fqdnTooLong: "длиннее 253 символов",
     seedHint: "В сиде только example.com. Чужие списки не вшиты.",
     match: "Совпадение",

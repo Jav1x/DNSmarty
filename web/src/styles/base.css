@@ -35,7 +35,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 button.tiny { padding: 3px 9px; font-size: var(--fs-s); }
 
 label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
-input, select {
+input, select, textarea {
   width: 100%;
   background: var(--surface);
   color: var(--text);
@@ -43,6 +43,7 @@ input, select {
   border-radius: var(--radius-s);
   padding: 7px 9px;
 }
+textarea { min-height: 64px; resize: vertical; font: inherit; }
 input::placeholder { color: var(--muted); }
 input[aria-invalid="true"] { border-color: var(--danger); }
 .check { display: flex; gap: 6px; align-items: center; color: var(--text); font-size: 14px; }

@@ -66,3 +66,17 @@
 @media (min-width: 901px) {
   .backdrop { display: none; }
 }
+
+/* Services page */
+.service-card + .service-card { margin-top: var(--space-3); }
+.service-card header { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; color: var(--muted); font-size: var(--fs-s); }
+.service-card header button { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text); }
+.service-body { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.service-body .mono { color: var(--muted); font-size: var(--fs-s); }
+.members { margin-top: var(--space-3); }
+.members textarea, .new-service textarea { width: 100%; }
+.members table { margin-top: var(--space-2); }
+.new-service { margin-bottom: var(--space-3); }
+.weight { display: inline-flex; align-items: center; gap: 6px; }
+
+.members .row-actions select { width: auto; }
