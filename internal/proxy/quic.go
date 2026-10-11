@@ -1,12 +1,14 @@
 package proxy
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io"
+	"strings"
 
 	"golang.org/x/crypto/hkdf"
 )
@@ -47,6 +49,44 @@ func initialSNI(pkt []byte) (string, error) {
 		if err == nil && name != "" {
 			return name, nil
 		}
+	}
+	return gquicSNI(pkt)
+}
+
+// gquicSNI reads the SNI tag from a Google QUIC CRYPTO CHLO (Q046 and kin).
+// The inchoate client hello is sent in the clear with a FNV checksum; Xbox
+// YouTube still uses this instead of IETF Initial + TLS.
+func gquicSNI(pkt []byte) (string, error) {
+	i := bytes.Index(pkt, []byte("CHLO"))
+	if i < 0 || i+8 > len(pkt) {
+		return "", errNotInitial
+	}
+	nent := int(binary.LittleEndian.Uint16(pkt[i+4 : i+6]))
+	if nent < 1 || nent > 64 {
+		return "", errNotInitial
+	}
+	tbl := i + 8
+	if tbl+nent*8 > len(pkt) {
+		return "", errNotInitial
+	}
+	values := tbl + nent*8
+	var start uint32
+	for t := 0; t < nent; t++ {
+		off := tbl + t*8
+		tag := pkt[off : off+4]
+		end := binary.LittleEndian.Uint32(pkt[off+4 : off+8])
+		if end < start || values+int(end) > len(pkt) {
+			return "", errNotInitial
+		}
+		if tag[0] == 'S' && tag[1] == 'N' && tag[2] == 'I' {
+			host := strings.TrimRight(string(pkt[values+int(start):values+int(end)]), "\x00")
+			host = strings.ToLower(strings.TrimSpace(host))
+			if host == "" || strings.ContainsAny(host, " \t\r\n") {
+				return "", errNotInitial
+			}
+			return host, nil
+		}
+		start = end
 	}
 	return "", errNotInitial
 }

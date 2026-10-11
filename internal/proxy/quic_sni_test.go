@@ -38,6 +38,40 @@ func TestInitialSNI_CoalescedGreaseThenRFC9001(t *testing.T) {
 	}
 }
 
+func TestInitialSNI_GQ046CHLO(t *testing.T) {
+	// Xbox YouTube sends Google QUIC Q046; SNI is a CHLO tag, not TLS.
+	pkt := gquicCHLO("rr3---sn-4g5ednsy.googlevideo.com")
+	name, err := initialSNI(pkt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "rr3---sn-4g5ednsy.googlevideo.com" {
+		t.Fatalf("sni %q", name)
+	}
+}
+
+func gquicCHLO(sni string) []byte {
+	sniB := []byte(sni)
+	pad := make([]byte, 32)
+	// tags sorted: PAD then SNI (P < S)
+	num := 2
+	values := append(append([]byte{}, pad...), sniB...)
+	msg := make([]byte, 0, 8+num*8+len(values))
+	msg = append(msg, 'C', 'H', 'L', 'O')
+	msg = append(msg, byte(num), 0, 0, 0) // uint16le entries, padding
+	msg = append(msg, 'P', 'A', 'D', 0)
+	msg = append(msg, u32le(uint32(len(pad)))...)
+	msg = append(msg, 'S', 'N', 'I', 0)
+	msg = append(msg, u32le(uint32(len(pad)+len(sniB)))...)
+	msg = append(msg, values...)
+	hdr := []byte{0xc3, 'Q', '0', '4', '6', 0x08, 1, 2, 3, 4, 5, 6, 7, 8}
+	return append(hdr, msg...)
+}
+
+func u32le(v uint32) []byte {
+	return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)}
+}
+
 func TestInitialSNI_RejectsGarbage(t *testing.T) {
 	if _, err := initialSNI([]byte("hello")); err == nil {
 		t.Fatal("expected error")
