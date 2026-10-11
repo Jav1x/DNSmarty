@@ -93,7 +93,9 @@ func TestACLRulesStats(t *testing.T) {
 		{At: now, ClientIP: "192.0.2.5", QName: "f.test.", Decision: "acl"},
 		{At: now, ClientIP: "10.5.5.5", QName: "g.test.", Decision: "acl"},
 		{At: now, ClientIP: "198.51.100.7", QName: "h.test.", Decision: "forward"},
-		{At: now.Add(-26 * time.Hour), ClientIP: "198.51.100.7", QName: "old.test.", Decision: "acl"},
+		// Start of yesterday UTC: always has a partition (init creates current_date-1)
+		// and is outside the 24h window. now-26h falls on current_date-2 around midnight UTC.
+		{At: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(-24 * time.Hour), ClientIP: "198.51.100.7", QName: "old.test.", Decision: "acl"},
 	} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO dns_hit (day, at, node_id, client_ip, qname, qtype, rcode, decision)
