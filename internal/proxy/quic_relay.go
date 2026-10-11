@@ -2,8 +2,10 @@ package proxy
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,6 +86,9 @@ func (s *Server) handleQUIC(ctx context.Context, pc net.PacketConn, addr net.Add
 	}
 	name, err := initialSNI(pkt)
 	if err != nil {
+		if len(pkt) >= 1200 {
+			s.noteQUICDrop(client, pkt, err)
+		}
 		return
 	}
 	if !nameAllowed(name, c.snap.Names) {
@@ -229,4 +234,30 @@ func (s *Server) dialOriginUDP(ctx context.Context, snap *snapshot.ProxySnap, na
 		return c, nil
 	}
 	return nil, last
+}
+
+func (s *Server) noteQUICDrop(client netip.Addr, pkt []byte, err error) {
+	ip := client.String()
+	key := "q:" + ip
+	now := time.Now()
+	s.aclMu.Lock()
+	last, seen := s.aclSeen[key]
+	if !seen || now.Sub(last) > time.Minute {
+		s.aclSeen[key] = now
+		seen = false
+	}
+	s.aclMu.Unlock()
+	if seen {
+		return
+	}
+	n := 16
+	if len(pkt) < n {
+		n = len(pkt)
+	}
+	s.emit(Report{
+		At:        now.UTC(),
+		ClientIP:  ip,
+		Status:    "refused",
+		DialError: clip("quic "+hex.EncodeToString(pkt[:n])+" "+err.Error(), 300),
+	})
 }

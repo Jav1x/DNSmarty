@@ -18,6 +18,26 @@ func TestInitialSNI_RFC9001(t *testing.T) {
 	}
 }
 
+func TestInitialSNI_CoalescedGreaseThenRFC9001(t *testing.T) {
+	// Clients pad the datagram with an unknown-version long header; the real
+	// Initial follows. Dropping the whole UDP payload misses the SNI.
+	grease := []byte{
+		0xc0, 0x0a, 0x0a, 0x0a, 0x0a,
+		8, 1, 2, 3, 4, 5, 6, 7, 8,
+		0,
+		0x10,
+		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+	}
+	pkt := append(grease, mustHex(rfc9001ClientInitial)...)
+	name, err := initialSNI(pkt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "example.com" {
+		t.Fatalf("sni %q", name)
+	}
+}
+
 func TestInitialSNI_RejectsGarbage(t *testing.T) {
 	if _, err := initialSNI([]byte("hello")); err == nil {
 		t.Fatal("expected error")

@@ -24,16 +24,31 @@ var (
 var errNotInitial = errors.New("not a quic initial")
 
 // initialSNI decrypts a QUIC Initial (v1 or v2) and returns the TLS SNI.
+// A datagram may start with a greased unknown-version packet; scan for a
+// real Initial rather than requiring it at offset 0.
 func initialSNI(pkt []byte) (string, error) {
-	frames, err := openInitial(pkt)
-	if err != nil {
-		return "", err
+	for off := 0; off+6 < len(pkt); off++ {
+		if pkt[off]&0xc0 != 0xc0 {
+			continue
+		}
+		ver := binary.BigEndian.Uint32(pkt[off+1 : off+5])
+		if _, _, _, _, ok := initialParams(ver); !ok {
+			continue
+		}
+		frames, err := openInitial(pkt[off:])
+		if err != nil {
+			continue
+		}
+		crypto, err := cryptoStream(frames)
+		if err != nil {
+			continue
+		}
+		name, err := sniFromHandshake(crypto)
+		if err == nil && name != "" {
+			return name, nil
+		}
 	}
-	crypto, err := cryptoStream(frames)
-	if err != nil {
-		return "", err
-	}
-	return sniFromHandshake(crypto)
+	return "", errNotInitial
 }
 
 func openInitial(pkt []byte) ([]byte, error) {
