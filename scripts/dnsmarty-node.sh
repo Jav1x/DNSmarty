@@ -7,7 +7,6 @@ set -euo pipefail
 
 REPO="${DNSMARTY_REPO:-Jav1x/DNSmarty}"
 OWNER="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
-IMAGE_REPO="ghcr.io/${OWNER}/dnsmarty"
 # Pinned to a release by resolve_image; --image or DNSMARTY_IMAGE set it explicitly.
 IMAGE="${DNSMARTY_IMAGE:-}"
 WANT_VERSION=""
