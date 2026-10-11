@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -111,6 +112,56 @@ func TestQUICRelayForwardsInitialAndReply(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("no report")
+	}
+}
+
+func TestQUICRelayHoldsUntilSplitSNI(t *testing.T) {
+	p1, err := os.ReadFile("testdata/quicgo_cf_pkt1.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := os.ReadFile("testdata/quicgo_cf_pkt2.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, got := startUDPOrigin(t)
+	_, pc := startQUIC(t, snapshot.ProxySnap{
+		SessionLimit:  10,
+		IdleTimeoutMs: 2000,
+		Names:         []snapshot.NameRule{{Name: "cloudflare.com", Match: snapshot.MatchSuffix}},
+	}, origin.LocalAddr())
+
+	client, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.WriteTo(p1, pc.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-got:
+		t.Fatal("origin must not see a datagram before SNI")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := client.WriteTo(p2, pc.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	deadline := time.After(2 * time.Second)
+	for n < 2 {
+		select {
+		case p := <-got:
+			n++
+			if n == 1 && len(p) != len(p1) {
+				t.Fatalf("first flushed %d, want %d", len(p), len(p1))
+			}
+			if n == 2 && len(p) != len(p2) {
+				t.Fatalf("second flushed %d, want %d", len(p), len(p2))
+			}
+		case <-deadline:
+			t.Fatalf("origin got %d datagrams, want 2", n)
+		}
 	}
 }
 

@@ -107,8 +107,9 @@ type Server struct {
 
 	udpDial func(context.Context, *snapshot.ProxySnap, string) (net.Conn, error)
 
-	qmu  sync.Mutex
-	quic map[string]*quicSess
+	qmu   sync.Mutex
+	quic  map[string]*quicSess
+	qhold map[string]*quicHold
 }
 
 func New(log *slog.Logger, httpAddr, httpsAddr string) *Server {
@@ -124,6 +125,7 @@ func New(log *slog.Logger, httpAddr, httpsAddr string) *Server {
 		aclSeen: map[string]time.Time{},
 		res:     lru.New[string, resolved](resolveCacheSize),
 		quic:    map[string]*quicSess{},
+		qhold:   map[string]*quicHold{},
 	}
 	s.maxConns.Store(defaultMaxConns)
 	s.transport = s.newTransport()

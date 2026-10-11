@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -30,7 +31,40 @@ var errNotInitial = errors.New("not a quic initial")
 // initialSNI decrypts a QUIC Initial (v1 or v2) and returns the TLS SNI.
 // A datagram may start with a greased unknown-version packet; scan for a
 // real Initial rather than requiring it at offset 0.
+type cryptoFrag struct {
+	off  int
+	data []byte
+}
+
+func sniFromInitials(pkts [][]byte) (string, error) {
+	var frags []cryptoFrag
+	ietf := false
+	for _, pkt := range pkts {
+		f, ok := cryptoFragsFromPkt(pkt)
+		if !ok {
+			continue
+		}
+		ietf = true
+		frags = append(frags, f...)
+	}
+	if ietf {
+		if name, err := sniFromHandshake(assembleCrypto(frags)); err == nil && name != "" {
+			return name, nil
+		}
+	}
+	for _, pkt := range pkts {
+		if name, err := gquicSNI(pkt); err == nil && name != "" {
+			return name, nil
+		}
+	}
+	return "", errNotInitial
+}
+
 func initialSNI(pkt []byte) (string, error) {
+	return sniFromInitials([][]byte{pkt})
+}
+
+func cryptoFragsFromPkt(pkt []byte) ([]cryptoFrag, bool) {
 	for off := 0; off+6 < len(pkt); off++ {
 		if pkt[off]&0xc0 != 0xc0 {
 			continue
@@ -43,16 +77,9 @@ func initialSNI(pkt []byte) (string, error) {
 		if err != nil {
 			continue
 		}
-		crypto, err := cryptoStream(frames)
-		if err != nil {
-			continue
-		}
-		name, err := sniFromHandshake(crypto)
-		if err == nil && name != "" {
-			return name, nil
-		}
+		return collectCrypto(frames), true
 	}
-	return gquicSNI(pkt)
+	return nil, false
 }
 
 func quicHead(pkt []byte) (head, ver string) {
@@ -283,49 +310,71 @@ func readVarint(b []byte) (uint64, int, error) {
 }
 
 func cryptoStream(frames []byte) ([]byte, error) {
-	buf := make([]byte, 0, len(frames))
+	buf := assembleCrypto(collectCrypto(frames))
+	if len(buf) == 0 {
+		return nil, errNotInitial
+	}
+	return buf, nil
+}
+
+func collectCrypto(frames []byte) []cryptoFrag {
+	var out []cryptoFrag
 	i := 0
 	for i < len(frames) {
 		t := frames[i]
 		i++
 		switch t {
-		case 0x00:
-			continue
-		case 0x01:
+		case 0x00, 0x01:
 			continue
 		case 0x06:
 			off, n, err := readVarint(frames[i:])
 			if err != nil {
-				return nil, err
+				return out
 			}
 			i += n
 			ln, n, err := readVarint(frames[i:])
 			if err != nil {
-				return nil, err
+				return out
 			}
 			i += n
 			if ln > 16384 || i+int(ln) > len(frames) {
-				return nil, errNotInitial
+				return out
 			}
-			data := frames[i : i+int(ln)]
+			out = append(out, cryptoFrag{off: int(off), data: frames[i : i+int(ln)]})
 			i += int(ln)
-			if off != 0 {
-				// ClientHello starts at offset 0 in the first Initial.
-				continue
-			}
-			buf = append(buf, data...)
 		case 0x02, 0x03:
 			if err := skipACK(frames, &i, t == 0x03); err != nil {
-				return nil, err
+				return out
 			}
 		default:
-			return buf, nil
+			return out
 		}
 	}
-	if len(buf) == 0 {
-		return nil, errNotInitial
+	return out
+}
+
+func assembleCrypto(frags []cryptoFrag) []byte {
+	if len(frags) == 0 {
+		return nil
 	}
-	return buf, nil
+	sort.Slice(frags, func(i, j int) bool { return frags[i].off < frags[j].off })
+	var out []byte
+	pos := 0
+	for _, f := range frags {
+		if f.off > pos {
+			break
+		}
+		if f.off+len(f.data) <= pos {
+			continue
+		}
+		data := f.data
+		if f.off < pos {
+			data = data[pos-f.off:]
+		}
+		out = append(out, data...)
+		pos += len(data)
+	}
+	return out
 }
 
 func skipACK(b []byte, i *int, ecn bool) error {

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/hex"
+	"os"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,90 @@ func TestInitialSNI_CoalescedGreaseThenRFC9001(t *testing.T) {
 	if name != "example.com" {
 		t.Fatalf("sni %q", name)
 	}
+}
+
+func TestCryptoStream_AssemblesOffsetFragments(t *testing.T) {
+	frames := append(cryptoFrame(0, []byte("HELLO")), cryptoFrame(5, []byte(" WORLD"))...)
+	got, err := cryptoStream(frames)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "HELLO WORLD" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSNIFromHandshake_TruncatedClientHello(t *testing.T) {
+	full := clientHelloWithSNI("example.com", 24)
+	cut := full[:len(full)-20]
+	name, err := sniFromHandshake(cut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "example.com" {
+		t.Fatalf("sni %q", name)
+	}
+}
+
+func TestSNIFromInitials_QuicGoSplitSNI(t *testing.T) {
+	p1, err := os.ReadFile("testdata/quicgo_cf_pkt1.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := os.ReadFile("testdata/quicgo_cf_pkt2.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sniFromInitials([][]byte{p1}); err == nil {
+		t.Fatal("SNI must not be in the first datagram alone")
+	}
+	name, err := sniFromInitials([][]byte{p1, p2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "www.cloudflare.com" {
+		t.Fatalf("sni %q", name)
+	}
+}
+
+func cryptoFrame(off int, data []byte) []byte {
+	b := []byte{0x06}
+	b = append(b, testVarint(uint64(off))...)
+	b = append(b, testVarint(uint64(len(data)))...)
+	return append(b, data...)
+}
+
+func testVarint(v uint64) []byte {
+	switch {
+	case v < 64:
+		return []byte{byte(v)}
+	case v < 16384:
+		return []byte{byte(v>>8) | 0x40, byte(v)}
+	default:
+		return []byte{byte(v>>24) | 0x80, byte(v >> 16), byte(v >> 8), byte(v)}
+	}
+}
+
+func clientHelloWithSNI(sni string, extra int) []byte {
+	host := []byte(sni)
+	name := append([]byte{0, byte(len(host) >> 8), byte(len(host))}, host...)
+	list := append([]byte{byte(len(name) >> 8), byte(len(name))}, name...)
+	sniExt := append([]byte{0, 0, byte(len(list) >> 8), byte(len(list))}, list...)
+	pad := make([]byte, extra)
+	for i := range pad {
+		pad[i] = 0xaa
+	}
+	dummy := append([]byte{0x00, 0x15, byte(len(pad) >> 8), byte(len(pad))}, pad...)
+	ext := append(sniExt, dummy...)
+	body := []byte{0x03, 0x03}
+	body = append(body, make([]byte, 32)...)
+	body = append(body, 0)
+	body = append(body, 0, 2, 0x13, 0x01)
+	body = append(body, 1, 0)
+	body = append(body, byte(len(ext)>>8), byte(len(ext)))
+	body = append(body, ext...)
+	hs := []byte{1, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}
+	return append(hs, body...)
 }
 
 func TestInitialSNI_GQ046CHLO(t *testing.T) {

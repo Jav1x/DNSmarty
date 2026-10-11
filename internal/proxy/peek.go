@@ -35,6 +35,11 @@ func sniFromHandshake(b []byte) (string, error) {
 		n := int(b[i+1])<<16 | int(b[i+2])<<8 | int(b[i+3])
 		i += 4
 		if n < 0 || i+n > len(b) {
+			if typ == 1 && i < len(b) {
+				if name, err := clientHelloSNI(b[i:]); err == nil && name != "" {
+					return name, nil
+				}
+			}
 			return "", errors.New("handshake")
 		}
 		if typ == 1 {
@@ -82,10 +87,14 @@ func clientHelloSNI(ch []byte) (string, error) {
 	}
 	extLen := int(ch[i])<<8 | int(ch[i+1])
 	i += 2
-	if extLen < 0 || i+extLen > len(ch) {
+	if extLen < 0 {
 		return "", errors.New("extensions")
 	}
-	ext := ch[i : i+extLen]
+	end := i + extLen
+	if end > len(ch) {
+		end = len(ch)
+	}
+	ext := ch[i:end]
 	j := 0
 	for j+4 <= len(ext) {
 		typ := int(ext[j])<<8 | int(ext[j+1])

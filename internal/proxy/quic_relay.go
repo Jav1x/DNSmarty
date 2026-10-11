@@ -15,7 +15,16 @@ import (
 	"dnsmarty/internal/snapshot"
 )
 
-const quicAmpFactor = 3
+const (
+	quicAmpFactor = 3
+	quicHoldMax   = 8
+	quicHoldTTL   = 3 * time.Second
+)
+
+type quicHold struct {
+	pkts [][]byte
+	at   time.Time
+}
 
 type quicSess struct {
 	origin   net.Conn
@@ -58,10 +67,38 @@ func (s *Server) closeQUIC() {
 	for _, q := range s.quic {
 		all = append(all, q)
 	}
+	s.quic = map[string]*quicSess{}
+	s.qhold = map[string]*quicHold{}
 	s.qmu.Unlock()
 	for _, q := range all {
 		q.shutdown()
 	}
+}
+
+func (s *Server) takeHold(key string, pkt []byte) [][]byte {
+	s.qmu.Lock()
+	defer s.qmu.Unlock()
+	h := s.qhold[key]
+	if h == nil || time.Since(h.at) > quicHoldTTL {
+		delete(s.qhold, key)
+		return [][]byte{pkt}
+	}
+	return append(append([][]byte{}, h.pkts...), pkt)
+}
+
+func (s *Server) saveHold(key string, pkts [][]byte) {
+	if len(pkts) > quicHoldMax {
+		pkts = pkts[len(pkts)-quicHoldMax:]
+	}
+	s.qmu.Lock()
+	s.qhold[key] = &quicHold{pkts: pkts, at: time.Now()}
+	s.qmu.Unlock()
+}
+
+func (s *Server) dropHold(key string) {
+	s.qmu.Lock()
+	delete(s.qhold, key)
+	s.qmu.Unlock()
 }
 
 func (s *Server) handleQUIC(ctx context.Context, pc net.PacketConn, addr net.Addr, pkt []byte) {
@@ -86,14 +123,22 @@ func (s *Server) handleQUIC(ctx context.Context, pc net.PacketConn, addr net.Add
 		s.refuseACL(client)
 		return
 	}
-	name, err := initialSNI(pkt)
+	pkts := s.takeHold(key, pkt)
+	name, err := sniFromInitials(pkts)
 	if err != nil {
+		if _, ok := cryptoFragsFromPkt(pkt); ok {
+			s.saveHold(key, pkts)
+			s.logQUIC(addr, pkt, "", "hold", nil)
+			return
+		}
+		s.dropHold(key)
 		s.logQUIC(addr, pkt, "", "parse", err)
 		if len(pkt) >= 1200 {
 			s.noteQUICDrop(client, pkt, err)
 		}
 		return
 	}
+	s.dropHold(key)
 	if !nameAllowed(name, c.snap.Names) {
 		s.logQUIC(addr, pkt, name, "not in snapshot", nil)
 		s.emit(Report{At: time.Now().UTC(), ClientIP: client.String(), SNI: clip(name, 255), Status: "refused", DialError: "not in snapshot"})
@@ -139,13 +184,17 @@ func (s *Server) handleQUIC(ctx context.Context, pc net.PacketConn, addr net.Add
 		_ = origin.Close()
 		s.release(sessKey)
 		s.conns.Add(-1)
-		other.send(pkt)
+		for _, p := range pkts {
+			other.send(p)
+		}
 		return
 	}
 	s.quic[key] = q
 	s.qmu.Unlock()
 	s.logQUIC(addr, pkt, q.sni, "open", nil)
-	q.send(pkt)
+	for _, p := range pkts {
+		q.send(p)
+	}
 	go q.pump(pc)
 }
 
