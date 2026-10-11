@@ -13,8 +13,13 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      panel_release_created: ${{ steps.release.outputs['internal/panel--release_created'] }}
+      panel_tag_name: ${{ steps.release.outputs['internal/panel--tag_name'] }}
+      dns_release_created: ${{ steps.release.outputs['internal/dns--release_created'] }}
+      dns_tag_name: ${{ steps.release.outputs['internal/dns--tag_name'] }}
+      proxy_release_created: ${{ steps.release.outputs['internal/proxy--release_created'] }}
+      proxy_tag_name: ${{ steps.release.outputs['internal/proxy--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -23,9 +28,9 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  build-release:
+  release-panel:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ needs.release-please.outputs.panel_release_created == 'true' }}
     permissions:
       contents: write
       packages: write
@@ -33,5 +38,34 @@ jobs:
       attestations: write
     uses: ./.github/workflows/image.yml
     with:
-      tag_name: ${{ needs.release-please.outputs.tag_name }}
+      service: panel
+      tag_name: ${{ needs.release-please.outputs.panel_tag_name }}
+    secrets: inherit
+
+  release-dns:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.dns_release_created == 'true' }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/image.yml
+    with:
+      service: dns
+      tag_name: ${{ needs.release-please.outputs.dns_tag_name }}
+    secrets: inherit
+
+  release-proxy:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.proxy_release_created == 'true' }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/image.yml
+    with:
+      service: proxy
+      tag_name: ${{ needs.release-please.outputs.proxy_tag_name }}
     secrets: inherit

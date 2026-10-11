@@ -7,7 +7,7 @@ set -euo pipefail
 
 REPO="${DNSMARTY_REPO:-Jav1x/DNSmarty}"
 OWNER="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
-IMAGE_REPO="ghcr.io/${OWNER}/dnsmarty"
+IMAGE_REPO="ghcr.io/${OWNER}/dnsmarty-panel"
 # Resolved to a release tag by resolve_image; DNSMARTY_IMAGE pins it explicitly.
 IMAGE="${DNSMARTY_IMAGE:-}"
 WANT_VERSION=""
@@ -450,7 +450,7 @@ latest_tag() {
 display_version() {
   local img="" tag=""
   if [[ -n "$WANT_VERSION" ]]; then
-    printf '%s' "${WANT_VERSION#v}"
+    printf '%s' "${WANT_VERSION}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/'
     return
   fi
   img="${IMAGE:-}"
@@ -461,7 +461,7 @@ display_version() {
   fi
   tag=$(latest_tag)
   if [[ -n "$tag" ]]; then
-    printf '%s' "${tag#v}"
+    printf '%s' "${tag}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/'
     return
   fi
   printf 'dev'
@@ -472,13 +472,15 @@ display_version() {
 resolve_image() {
   local tag=""
   if [[ -n "$WANT_VERSION" ]]; then
-    IMAGE="${IMAGE_REPO}:${WANT_VERSION#v}"
+    tag=$(printf '%s' "${WANT_VERSION}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
+    IMAGE="${IMAGE_REPO}:${tag}"
     return
   fi
   [[ -n "$IMAGE" ]] && return
   tag=$(latest_tag)
   if [[ -n "$tag" ]]; then
-    IMAGE="${IMAGE_REPO}:${tag#v}"
+    tag=$(printf '%s' "${tag}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
+    IMAGE="${IMAGE_REPO}:${tag}"
   else
     IMAGE="${IMAGE_REPO}:latest"
     warn "$(say "No release found, using ${IMAGE}." "Релиз не найден, беру ${IMAGE}.")"
@@ -873,7 +875,10 @@ cmd_update() {
     IMAGE=$(env_get DNSMARTY_IMAGE)
     local tag=""
     tag=$(latest_tag)
-    [[ -z "$tag" ]] || IMAGE="${IMAGE_REPO}:${tag#v}"
+    if [[ -n "$tag" ]]; then
+      tag=$(printf '%s' "${tag}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
+      IMAGE="${IMAGE_REPO}:${tag}"
+    fi
     [[ -n "$IMAGE" ]] || resolve_image
     env_set DNSMARTY_IMAGE "$IMAGE"
   else

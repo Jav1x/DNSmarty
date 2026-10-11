@@ -18,11 +18,25 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -o /out/dnsmarty ./cmd/dnsmarty
 
 # distroless/static ships CA certificates and tzdata; no shell, no package manager.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS base
 ARG VERSION=dev
-LABEL org.opencontainers.image.title="dnsmarty" \
-      org.opencontainers.image.source="https://github.com/Jav1x/DNSmarty" \
+LABEL org.opencontainers.image.source="https://github.com/Jav1x/DNSmarty" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=build /out/dnsmarty /dnsmarty
 USER nonroot:nonroot
 ENTRYPOINT ["/dnsmarty"]
+
+# Target: dns
+FROM base AS dns
+LABEL org.opencontainers.image.title="dnsmarty-dns"
+CMD ["dns"]
+
+# Target: proxy
+FROM base AS proxy
+LABEL org.opencontainers.image.title="dnsmarty-proxy"
+CMD ["proxy"]
+
+# Target: panel (default if no target is specified)
+FROM base AS panel
+LABEL org.opencontainers.image.title="dnsmarty-panel"
+CMD ["panel"]

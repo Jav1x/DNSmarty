@@ -563,11 +563,15 @@ installed_image() {
   printf '%s' "${line#DNSMARTY_IMAGE=}"
 }
 
+image_repo() {
+  printf 'ghcr.io/%s/dnsmarty-%s' "${OWNER}" "${role:-dns}"
+}
+
 # display_version is the tag shown in banners: --version, pinned/installed image, else latest release.
 display_version() {
   local img="" tag=""
   if [[ -n "$WANT_VERSION" ]]; then
-    printf '%s' "${WANT_VERSION#v}"
+    printf '%s' "${WANT_VERSION}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/'
     return
   fi
   img="${IMAGE:-}"
@@ -578,7 +582,7 @@ display_version() {
   fi
   tag=$(latest_tag)
   if [[ -n "$tag" ]]; then
-    printf '%s' "${tag#v}"
+    printf '%s' "${tag}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/'
     return
   fi
   printf 'dev'
@@ -587,15 +591,18 @@ display_version() {
 # resolve_image: --version, then --image / DNSMARTY_IMAGE, then the image already in .env
 # (unless updating), then the latest release.
 resolve_image() {
-  local tag="" saved=""
+  local tag="" saved="" repo=""
+  repo=$(image_repo)
   if [[ -n "$WANT_VERSION" ]]; then
-    IMAGE="${IMAGE_REPO}:${WANT_VERSION#v}"
+    tag=$(printf '%s' "${WANT_VERSION}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
+    IMAGE="${repo}:${tag}"
     return
   fi
   [[ -n "$IMAGE" ]] && return
   tag=$(latest_tag)
   if [[ -n "$tag" ]]; then
-    IMAGE="${IMAGE_REPO}:${tag#v}"
+    tag=$(printf '%s' "${tag}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
+    IMAGE="${repo}:${tag}"
     return
   fi
   saved=$(env_get DNSMARTY_IMAGE)
@@ -603,7 +610,7 @@ resolve_image() {
     IMAGE="$saved"
     return
   fi
-  IMAGE="${IMAGE_REPO}:latest"
+  IMAGE="${repo}:latest"
   warn "$(say "No release found, using ${IMAGE}." "Релиз не найден, беру ${IMAGE}.")"
 }
 

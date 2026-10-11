@@ -9,12 +9,29 @@ name: dnsmarty
 #   ACME      CADDYFILE=Caddyfile.acme PANEL_DOMAIN=panel.example.com
 #             PANEL_HTTPS_PORT=443 PANEL_HTTP_PORT=80 (Let's Encrypt needs both)
 
-x-image: &image
+x-panel-image: &panel-image
   build:
     context: .
+    target: panel
     args:
-      VERSION: ${DNSMARTY_VERSION:-dev}
-  image: ${DNSMARTY_IMAGE:-dnsmarty:local}
+      VERSION: ${PANEL_VERSION:-${DNSMARTY_VERSION:-dev}}
+  image: ${PANEL_IMAGE:-${DNSMARTY_IMAGE:-dnsmarty-panel:local}}
+
+x-dns-image: &dns-image
+  build:
+    context: .
+    target: dns
+    args:
+      VERSION: ${DNS_VERSION:-${DNSMARTY_VERSION:-dev}}
+  image: ${DNS_IMAGE:-${DNSMARTY_IMAGE:-dnsmarty-dns:local}}
+
+x-proxy-image: &proxy-image
+  build:
+    context: .
+    target: proxy
+    args:
+      VERSION: ${PROXY_VERSION:-${DNSMARTY_VERSION:-dev}}
+  image: ${PROXY_IMAGE:-${DNSMARTY_IMAGE:-dnsmarty-proxy:local}}
 
 x-logging: &logging
   logging:
@@ -54,7 +71,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    <<: [*image, *hardened]
+    <<: [*panel-image, *hardened]
     profiles: [panel]
     command: ["migrate"]
     environment:
@@ -66,7 +83,7 @@ services:
     restart: "no"
 
   panel:
-    <<: [*image, *hardened]
+    <<: [*panel-image, *hardened]
     profiles: [panel]
     command: ["panel"]
     environment:
@@ -122,7 +139,7 @@ services:
     restart: unless-stopped
 
   dns:
-    <<: [*image, *hardened]
+    <<: [*dns-image, *hardened]
     profiles: [dns]
     # Binding 53 and 853 needs NET_BIND_SERVICE in the effective set. Docker grants added
     # capabilities to uid 0 only; everything else is dropped.
@@ -154,7 +171,7 @@ services:
     restart: unless-stopped
 
   proxy:
-    <<: [*image, *hardened]
+    <<: [*proxy-image, *hardened]
     profiles: [proxy]
     user: "0:0"
     cap_add: [NET_BIND_SERVICE]
