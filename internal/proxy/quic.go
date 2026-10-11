@@ -6,9 +6,11 @@ import (
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"strings"
+	"unicode"
 
 	"golang.org/x/crypto/hkdf"
 )
@@ -51,6 +53,34 @@ func initialSNI(pkt []byte) (string, error) {
 		}
 	}
 	return gquicSNI(pkt)
+}
+
+func quicHead(pkt []byte) (head, ver string) {
+	n := 16
+	if len(pkt) < n {
+		n = len(pkt)
+	}
+	if n > 0 {
+		head = hex.EncodeToString(pkt[:n])
+	}
+	if len(pkt) >= 5 {
+		v := pkt[1:5]
+		if printableASCII(v) {
+			ver = string(v)
+		} else {
+			ver = hex.EncodeToString(v)
+		}
+	}
+	return head, ver
+}
+
+func printableASCII(b []byte) bool {
+	for _, c := range b {
+		if c < 32 || c > 126 || unicode.IsSpace(rune(c)) {
+			return false
+		}
+	}
+	return len(b) > 0
 }
 
 // gquicSNI reads the SNI tag from a Google QUIC CRYPTO CHLO (Q046 and kin).

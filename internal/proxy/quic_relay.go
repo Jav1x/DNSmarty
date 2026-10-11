@@ -77,26 +77,31 @@ func (s *Server) handleQUIC(ctx context.Context, pc net.PacketConn, addr net.Add
 	client := addrOf(addr)
 	c := s.snap.Load()
 	if c == nil {
+		s.logQUIC(addr, pkt, "", "no snapshot", nil)
 		s.emit(Report{At: time.Now().UTC(), ClientIP: client.String(), Status: "refused", DialError: "no snapshot"})
 		return
 	}
 	if !c.acl.Allowed(client) {
+		s.logQUIC(addr, pkt, "", "acl", nil)
 		s.refuseACL(client)
 		return
 	}
 	name, err := initialSNI(pkt)
 	if err != nil {
+		s.logQUIC(addr, pkt, "", "parse", err)
 		if len(pkt) >= 1200 {
 			s.noteQUICDrop(client, pkt, err)
 		}
 		return
 	}
 	if !nameAllowed(name, c.snap.Names) {
+		s.logQUIC(addr, pkt, name, "not in snapshot", nil)
 		s.emit(Report{At: time.Now().UTC(), ClientIP: client.String(), SNI: clip(name, 255), Status: "refused", DialError: "not in snapshot"})
 		return
 	}
 	if s.conns.Add(1) > s.maxConns.Load() {
 		s.conns.Add(-1)
+		s.logQUIC(addr, pkt, name, "overload", nil)
 		metrics.ProxySessions.WithLabelValues("overload").Inc()
 		return
 	}
@@ -107,6 +112,7 @@ func (s *Server) handleQUIC(ctx context.Context, pc net.PacketConn, addr net.Add
 	}
 	if !s.acquire(sessKey, limit) {
 		s.conns.Add(-1)
+		s.logQUIC(addr, pkt, name, "limited", nil)
 		s.emit(Report{At: time.Now().UTC(), ClientIP: client.String(), SNI: clip(name, 255), Status: "limited"})
 		return
 	}
@@ -114,6 +120,7 @@ func (s *Server) handleQUIC(ctx context.Context, pc net.PacketConn, addr net.Add
 	if err != nil {
 		s.release(sessKey)
 		s.conns.Add(-1)
+		s.logQUIC(addr, pkt, name, "dial", err)
 		s.emit(Report{At: time.Now().UTC(), ClientIP: client.String(), SNI: clip(name, 255), Status: "dial_error", DialError: clip(err.Error(), 300)})
 		return
 	}
@@ -137,6 +144,7 @@ func (s *Server) handleQUIC(ctx context.Context, pc net.PacketConn, addr net.Add
 	}
 	s.quic[key] = q
 	s.qmu.Unlock()
+	s.logQUIC(addr, pkt, q.sni, "open", nil)
 	q.send(pkt)
 	go q.pump(pc)
 }
@@ -156,11 +164,19 @@ func (q *quicSess) send(pkt []byte) {
 func (q *quicSess) pump(pc net.PacketConn) {
 	defer q.shutdown()
 	buf := make([]byte, 65535)
+	first := true
 	for {
 		_ = q.origin.SetReadDeadline(time.Now().Add(q.idle))
 		n, err := q.origin.Read(buf)
 		if err != nil {
+			if first {
+				q.s.log.Info("quic", "result", "origin idle", "sni", q.sni, "client", q.client.String(), "err", err)
+			}
 			return
+		}
+		if first {
+			first = false
+			q.s.log.Info("quic", "result", "origin", "sni", q.sni, "n", n, "client", q.client.String())
 		}
 		out := buf[:n]
 		if !q.validated() {
@@ -234,6 +250,18 @@ func (s *Server) dialOriginUDP(ctx context.Context, snap *snapshot.ProxySnap, na
 		return c, nil
 	}
 	return nil, last
+}
+
+func (s *Server) logQUIC(addr net.Addr, pkt []byte, sni, result string, err error) {
+	head, ver := quicHead(pkt)
+	args := []any{"src", addr.String(), "n", len(pkt), "ver", ver, "head", head, "result", result}
+	if sni != "" {
+		args = append(args, "sni", sni)
+	}
+	if err != nil {
+		args = append(args, "err", err)
+	}
+	s.log.Info("quic", args...)
 }
 
 func (s *Server) noteQUICDrop(client netip.Addr, pkt []byte, err error) {

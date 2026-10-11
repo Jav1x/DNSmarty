@@ -179,6 +179,7 @@ func (s *Server) Listen(ctx context.Context) error {
 		_ = lnTLS.Close()
 		return err
 	}
+	s.log.Info("quic listen", "addr", pc.LocalAddr().String())
 	go func() {
 		if err := s.serveQUIC(ctx, pc); err != nil {
 			s.log.Error("quic", "err", err)
