@@ -635,28 +635,31 @@ env_set() {
   chmod 600 "$file"
 }
 
+# fetch_verified downloads a release asset and checks it against the release SHA256SUMS.
+# Falls back to main branch if release asset or tag is unavailable.
 fetch_verified() {
   local name=$1 dest=$2 tag="" tmp="" sums="" want="" got=""
   tag=$(latest_tag)
   tmp=$(mktemp)
   if [[ -n "$tag" ]]; then
-    curl -fsSL "https://github.com/${REPO}/releases/download/${tag}/${name}" -o "$tmp" \
-      || { rm -f "$tmp"; die "$(say "Download failed: ${name}" "Не скачался ${name}")"; }
-    sums=$(curl -fsSL "https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS") \
-      || { rm -f "$tmp"; die "$(say "SHA256SUMS is missing in ${tag}." "В ${tag} нет SHA256SUMS.")"; }
-    want=$(printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1}')
-    got=$(sha256_of "$tmp")
-    if [[ -z "$want" || "$want" != "$got" ]]; then
-      rm -f "$tmp"
-      die "$(say "Checksum mismatch for ${name}." "Контрольная сумма ${name} не совпала.")"
+    if curl -fsSL --max-time 15 "https://github.com/${REPO}/releases/download/${tag}/${name}" -o "$tmp" 2>/dev/null \
+       && sums=$(curl -fsSL --max-time 15 "https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS" 2>/dev/null); then
+      want=$(printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1}')
+      got=$(sha256_of "$tmp")
+      if [[ -n "$want" && "$want" == "$got" ]]; then
+        ok "$(say "${name} ${tag}, checksum verified" "${name} ${tag}, контрольная сумма совпала")"
+        mv -f "$tmp" "$dest"
+        chmod 755 "$dest"
+        return 0
+      fi
     fi
-    ok "$(say "${name} ${tag}, checksum verified" "${name} ${tag}, контрольная сумма совпала")"
-  else
-    warn "$(say "No release yet: ${name} comes from main without a checksum." "Релиза нет: ${name} берётся из main без проверки суммы.")"
-    curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/scripts/${name}" -o "$tmp" \
-      || { rm -f "$tmp"; die "$(say "Download failed: ${name}" "Не скачался ${name}")"; }
   fi
-  mv "$tmp" "$dest"
+  warn "$(say "Release asset for ${tag:-latest} unavailable; fetching ${name} from main..." "Файл релиза ${tag:-latest} недоступен; загружаю ${name} из main...")"
+  curl -fsSL --max-time 15 "https://raw.githubusercontent.com/${REPO}/main/scripts/${name}" -o "$tmp" \
+    || { rm -f "$tmp"; die "$(say "Download failed: ${name}" "Не скачался ${name}")"; }
+  mv -f "$tmp" "$dest"
+  chmod 755 "$dest"
+  ok "$(say "${name} updated from main" "${name} обновлён из main")"
 }
 
 write_unit() {
@@ -854,8 +857,17 @@ pick_installed_role() {
   fi
 }
 
+cmd_self_update() {
+  need_root
+  section "$(say "Updating CLI script" "Обновление скрипта управления")"
+  fetch_verified dnsmarty-node.sh "$BIN_PATH"
+  chmod 755 "$BIN_PATH"
+  ok "$(say "Command updated: ${BIN_PATH}" "Команда обновлена: ${BIN_PATH}")"
+}
+
 cmd_update() {
   need_root
+  cmd_self_update
   parse_install_args "$@"
   section "$(say "Checks" "Проверки")"
   audit_common
@@ -929,8 +941,10 @@ cmd_uninstall() {
 
 cmd_install_script() {
   need_root
-  if [[ -f "${BASH_SOURCE[0]}" ]] && cp "${BASH_SOURCE[0]}" "$BIN_PATH" 2>/dev/null; then
-    :
+  local src=""
+  src="${BASH_SOURCE[0]}"
+  if [[ -f "$src" && "$src" != "$BIN_PATH" ]] && cp "$src" "$BIN_PATH" 2>/dev/null; then
+    chmod 755 "$BIN_PATH"
   else
     fetch_verified dnsmarty-node.sh "$BIN_PATH"
   fi
@@ -954,7 +968,7 @@ menu() {
     fi
     choose \
       "$(say "Install agent" "Установить агент")" \
-      "$(say "Update image" "Обновить образ")" \
+      "$(say "Update agent and script" "Обновить агент и скрипт")" \
       "$(say "Check ports and access" "Проверить порты и доступ")" \
       "$(say "Status" "Статус")" \
       "$(say "Logs" "Логи")" \
@@ -982,6 +996,8 @@ usage() {
     cat <<EOF
   dnsmarty-node
   dnsmarty-node install --role dns --key KEY --port 9443
+  dnsmarty-node update
+  dnsmarty-node self-update
   dnsmarty-node dns logs
 
   Без аргументов открывается меню. Язык берётся из локали системы.
@@ -990,6 +1006,8 @@ EOF
     cat <<EOF
   dnsmarty-node
   dnsmarty-node install --role dns --key KEY --port 9443
+  dnsmarty-node update
+  dnsmarty-node self-update
   dnsmarty-node dns logs
 
   No arguments opens the menu. Language follows the system locale.
@@ -1015,6 +1033,7 @@ main() {
       cmd_install "$@"
       ;;
     update) shift; cmd_update "$@" ;;
+    self-update) cmd_self_update ;;
     check) shift || true; cmd_check ;;
     up | down | restart) shift; cmd_compose "$cmd" "$@" ;;
     status) cmd_compose ps ;;

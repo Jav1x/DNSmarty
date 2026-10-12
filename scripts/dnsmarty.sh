@@ -512,29 +512,30 @@ env_default() {
 }
 
 # fetch_verified downloads a release asset and checks it against the release SHA256SUMS.
-# Without a release it falls back to the main branch and says so.
+# Falls back to main branch if release asset or tag is unavailable.
 fetch_verified() {
   local name=$1 dest=$2 tag="" tmp="" sums="" want="" got=""
   tag=$(latest_tag)
   tmp=$(mktemp)
   if [[ -n "$tag" ]]; then
-    curl -fsSL "https://github.com/${REPO}/releases/download/${tag}/${name}" -o "$tmp" \
-      || { rm -f "$tmp"; die "$(say "Download failed: ${name}" "Не скачался ${name}")"; }
-    sums=$(curl -fsSL "https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS") \
-      || { rm -f "$tmp"; die "$(say "SHA256SUMS is missing in ${tag}." "В ${tag} нет SHA256SUMS.")"; }
-    want=$(printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1}')
-    got=$(sha256_of "$tmp")
-    if [[ -z "$want" || "$want" != "$got" ]]; then
-      rm -f "$tmp"
-      die "$(say "Checksum mismatch for ${name}." "Контрольная сумма ${name} не совпала.")"
+    if curl -fsSL --max-time 15 "https://github.com/${REPO}/releases/download/${tag}/${name}" -o "$tmp" 2>/dev/null \
+       && sums=$(curl -fsSL --max-time 15 "https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS" 2>/dev/null); then
+      want=$(printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1}')
+      got=$(sha256_of "$tmp")
+      if [[ -n "$want" && "$want" == "$got" ]]; then
+        ok "$(say "${name} ${tag}, checksum verified" "${name} ${tag}, контрольная сумма совпала")"
+        mv -f "$tmp" "$dest"
+        chmod 755 "$dest"
+        return 0
+      fi
     fi
-    ok "$(say "${name} ${tag}, checksum verified" "${name} ${tag}, контрольная сумма совпала")"
-  else
-    warn "$(say "No release yet: ${name} comes from main without a checksum." "Релиза нет: ${name} берётся из main без проверки суммы.")"
-    curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/scripts/${name}" -o "$tmp" \
-      || { rm -f "$tmp"; die "$(say "Download failed: ${name}" "Не скачался ${name}")"; }
   fi
-  mv "$tmp" "$dest"
+  warn "$(say "Release asset for ${tag:-latest} unavailable; fetching ${name} from main..." "Файл релиза ${tag:-latest} недоступен; загружаю ${name} из main...")"
+  curl -fsSL --max-time 15 "https://raw.githubusercontent.com/${REPO}/main/scripts/${name}" -o "$tmp" \
+    || { rm -f "$tmp"; die "$(say "Download failed: ${name}" "Не скачался ${name}")"; }
+  mv -f "$tmp" "$dest"
+  chmod 755 "$dest"
+  ok "$(say "${name} updated from main" "${name} обновлён из main")"
 }
 
 parse_args() {
@@ -860,10 +861,19 @@ cmd_install() {
   print_access
 }
 
+cmd_self_update() {
+  need_root
+  section "$(say "Updating CLI script" "Обновление скрипта управления")"
+  fetch_verified dnsmarty.sh "$BIN_PATH"
+  chmod 755 "$BIN_PATH"
+  ok "$(say "Command updated: ${BIN_PATH}" "Команда обновлена: ${BIN_PATH}")"
+}
+
 cmd_update() {
   need_root
   parse_args "$@"
   panel_installed || die "$(say "Panel is not installed." "Панель не установлена.")"
+  cmd_self_update
   section "$(say "Checks" "Проверки")"
   audit_tools
   echo
@@ -923,8 +933,8 @@ cmd_install_script() {
   need_root
   local src=""
   src="${BASH_SOURCE[0]}"
-  if [[ -f "$src" ]] && cp "$src" "$BIN_PATH" 2>/dev/null; then
-    :
+  if [[ -f "$src" && "$src" != "$BIN_PATH" ]] && cp "$src" "$BIN_PATH" 2>/dev/null; then
+    chmod 755 "$BIN_PATH"
   else
     fetch_verified dnsmarty.sh "$BIN_PATH"
   fi
@@ -948,7 +958,7 @@ menu() {
     fi
     choose \
       "$(say "Install panel" "Установить панель")" \
-      "$(say "Update images" "Обновить образы")" \
+      "$(say "Update panel and script" "Обновить панель и скрипт")" \
       "$(say "Check ports and access" "Проверить порты и доступ")" \
       "$(say "Status" "Статус")" \
       "$(say "Logs" "Логи")" \
@@ -979,6 +989,7 @@ usage() {
   dnsmarty
   dnsmarty install [--domain DOMAIN] [--version vX.Y.Z]
   dnsmarty update [--version vX.Y.Z]
+  dnsmarty self-update
   dnsmarty check | up | down | restart | status | logs | edit-env | uninstall
 
   Без аргументов открывается меню. Язык берётся из локали системы.
@@ -989,6 +1000,7 @@ EOF
   dnsmarty
   dnsmarty install [--domain DOMAIN] [--version vX.Y.Z]
   dnsmarty update [--version vX.Y.Z]
+  dnsmarty self-update
   dnsmarty check | up | down | restart | status | logs | edit-env | uninstall
 
   No arguments opens the menu. Language follows the system locale.
@@ -1004,6 +1016,7 @@ main() {
     menu) menu ;;
     install) shift; cmd_install "$@" ;;
     update) shift; cmd_update "$@" ;;
+    self-update) cmd_self_update ;;
     check) cmd_check ;;
     up | down | restart) shift; cmd_compose "$cmd" "$@" ;;
     status) cmd_compose ps ;;
