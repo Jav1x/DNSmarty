@@ -19,6 +19,7 @@ IN_MENU=0
 MENU_SEL=0
 CHECK_FAIL=0
 ENV_CREATED=0
+IS_UPDATING=0
 _CACHED_LATEST_TAG=""
 _CACHED_LATEST_TAG_SET=0
 
@@ -350,9 +351,9 @@ audit_tools() {
   if panel_installed; then
     if compose_running "$APP_DIR"; then
       data_ours=1
-      row_ok "$(say "Panel is already installed and running." "Панель уже установлена и работает.")"
+      [[ "$IS_UPDATING" -eq 1 ]] || row_ok "$(say "Panel is already installed and running." "Панель уже установлена и работает.")"
     else
-      row_warn "$(say "Panel files exist, containers are stopped." "Файлы панели есть, контейнеры остановлены.")"
+      [[ "$IS_UPDATING" -eq 1 ]] || row_warn "$(say "Panel files exist, containers are stopped." "Файлы панели есть, контейнеры остановлены.")"
     fi
   else
     row_ok "$(say "No panel install in ${APP_DIR}." "В ${APP_DIR} панели ещё нет.")"
@@ -439,10 +440,18 @@ latest_tag() {
     return
   fi
   _CACHED_LATEST_TAG_SET=1
-  _CACHED_LATEST_TAG=$(
-    curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
-      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true
+  local rel_tag=""
+  rel_tag=$(
+    curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null \
+      | grep -oE '"tag_name":[[:space:]]*"[^"]+"' | cut -d'"' -f4 | grep -E '^(panel-v|v)' | head -1 || true
   )
+  if [[ -z "$rel_tag" ]]; then
+    rel_tag=$(
+      curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true
+    )
+  fi
+  _CACHED_LATEST_TAG="$rel_tag"
   printf '%s' "$_CACHED_LATEST_TAG"
 }
 
@@ -536,6 +545,55 @@ fetch_verified() {
   mv -f "$tmp" "$dest"
   chmod 755 "$dest"
   ok "$(say "${name} updated from main" "${name} обновлён из main")"
+}
+
+check_script_update() {
+  [[ "${DNSMARTY_NO_UPDATE_CHECK:-0}" == "1" ]] && return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  local script_name="$1"
+  shift
+  local target_file="${BIN_PATH}"
+  [[ -f "$target_file" ]] || target_file="${BASH_SOURCE[0]}"
+  [[ -f "$target_file" ]] || return 0
+
+  local current_hash=""
+  current_hash=$(sha256_of "$target_file" 2>/dev/null || true)
+  [[ -n "$current_hash" ]] || return 0
+
+  local remote_hash="" tag="" sums=""
+  tag=$(latest_tag)
+  if [[ -n "$tag" ]]; then
+    sums=$(curl -fsSL --connect-timeout 2 --max-time 4 "https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS" 2>/dev/null || true)
+    if [[ -n "$sums" ]]; then
+      remote_hash=$(printf '%s\n' "$sums" | awk -v n="$script_name" '$2 == n || $2 == "*" n {print $1}')
+    fi
+  fi
+
+  if [[ -z "$remote_hash" ]]; then
+    local tmp=""
+    tmp=$(mktemp)
+    if curl -fsSL --connect-timeout 2 --max-time 4 "https://raw.githubusercontent.com/${REPO}/main/scripts/${script_name}" -o "$tmp" 2>/dev/null; then
+      remote_hash=$(sha256_of "$tmp" 2>/dev/null || true)
+    fi
+    rm -f "$tmp"
+  fi
+
+  [[ -n "$remote_hash" ]] || return 0
+
+  if [[ "$current_hash" != "$remote_hash" ]]; then
+    warn "$(say "A newer version of ${script_name} is available." "Доступна новая версия скрипта ${script_name}.")"
+    if [[ "$(id -u)" -ne 0 ]]; then
+      info "$(say "Run 'sudo ${script_name%.sh} self-update' to update." "Запустите 'sudo ${script_name%.sh} self-update' для обновления.")"
+    elif [[ -t 0 ]]; then
+      if confirm "$(say "Update ${script_name%.sh} now?" "Обновить ${script_name%.sh} сейчас?")" "y"; then
+        cmd_self_update
+        info "$(say "Restarting with the new version..." "Перезапуск с новой версией...")"
+        exec "$BIN_PATH" "$@"
+      fi
+    else
+      info "$(say "Run '${script_name%.sh} self-update' to update." "Запустите '${script_name%.sh} self-update' для обновления.")"
+    fi
+  fi
 }
 
 parse_args() {
@@ -859,6 +917,11 @@ cmd_install() {
   cmd_install_script
   bring_up
   print_access
+  if [[ -t 1 ]]; then
+    echo
+    info "$(say "Following logs (Ctrl+C to exit)..." "Вывод логов в реальном времени (Ctrl+C для выхода)...")"
+    (cd "$APP_DIR" && docker compose logs -f --tail 50) || true
+  fi
 }
 
 cmd_self_update() {
@@ -871,30 +934,58 @@ cmd_self_update() {
 
 cmd_update() {
   need_root
+  IS_UPDATING=1
+  cmd_self_update
   parse_args "$@"
   panel_installed || die "$(say "Panel is not installed." "Панель не установлена.")"
-  cmd_self_update
   section "$(say "Checks" "Проверки")"
   audit_tools
   echo
   [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before continuing." "Исправьте ошибки перед продолжением.")"
   section "$(say "Setup" "Настройка")"
   ensure_docker
-  # An explicit --version or DNSMARTY_IMAGE wins; otherwise move to the latest release.
-  if [[ -z "$WANT_VERSION" && -z "$IMAGE" ]]; then
-    IMAGE=$(env_get DNSMARTY_IMAGE)
-    local tag=""
+
+  local current_img target_img
+  current_img=$(env_get DNSMARTY_IMAGE)
+
+  if [[ -n "$WANT_VERSION" ]]; then
+    local tag
+    tag=$(printf '%s' "${WANT_VERSION}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
+    target_img="${IMAGE_REPO}:${tag}"
+  elif [[ -n "$IMAGE" ]]; then
+    target_img="$IMAGE"
+  else
+    local tag
     tag=$(latest_tag)
     if [[ -n "$tag" ]]; then
       tag=$(printf '%s' "${tag}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
-      IMAGE="${IMAGE_REPO}:${tag}"
+      target_img="${IMAGE_REPO}:${tag}"
+    else
+      target_img="${IMAGE_REPO}:latest"
     fi
-    [[ -n "$IMAGE" ]] || resolve_image
-    env_set DNSMARTY_IMAGE "$IMAGE"
-  else
-    resolve_image
-    env_set DNSMARTY_IMAGE "$IMAGE"
   fi
+
+  # Only update image if there is actually a newer version
+  if [[ -z "$WANT_VERSION" && -n "$current_img" && "$current_img" == "$target_img" && "$target_img" != *:latest && "$target_img" != *:dev ]]; then
+    ok "$(say "Image ${target_img} is already the latest version. Containers not restarted." "Образ ${target_img} уже самой свежей версии. Перезапуск не требуется.")"
+    print_access
+    return 0
+  fi
+
+  local old_id new_id
+  old_id=$(docker image inspect --format '{{.Id}}' "$target_img" 2>/dev/null || true)
+  info "$(say "Checking for newer image: ${target_img}..." "Проверяю наличие обновлённого образа: ${target_img}...")"
+  (cd "$APP_DIR" && docker compose pull panel) || docker pull "$target_img" || true
+  new_id=$(docker image inspect --format '{{.Id}}' "$target_img" 2>/dev/null || true)
+
+  if [[ -z "$WANT_VERSION" && -n "$old_id" && "$old_id" == "$new_id" && "$current_img" == "$target_img" ]]; then
+    ok "$(say "Image ${target_img} is already up to date. Containers not restarted." "Образ ${target_img} уже актуален. Перезапуск не требуется.")"
+    print_access
+    return 0
+  fi
+
+  IMAGE="$target_img"
+  env_set DNSMARTY_IMAGE "$IMAGE"
   [[ -z "$PANEL_DOMAIN" ]] || apply_tls_mode
   ensure_env
   write_compose
@@ -973,7 +1064,7 @@ menu() {
       1) run_action cmd_update; pause ;;
       2) run_action cmd_check; pause ;;
       3) run_action cmd_compose ps; pause ;;
-      4) run_action cmd_compose logs --tail 80; pause ;;
+      4) run_action cmd_compose logs -f --tail 80; pause ;;
       5) run_action cmd_compose restart; pause ;;
       6) run_action cmd_edit_env; pause ;;
       7) run_action cmd_uninstall; pause ;;
@@ -1013,6 +1104,10 @@ main() {
   detect_lang
   local cmd="${1:-menu}"
   case "$cmd" in
+    self-update | help | -h | --help) ;;
+    *) check_script_update "dnsmarty.sh" "$@" ;;
+  esac
+  case "$cmd" in
     menu) menu ;;
     install) shift; cmd_install "$@" ;;
     update) shift; cmd_update "$@" ;;
@@ -1020,7 +1115,14 @@ main() {
     check) cmd_check ;;
     up | down | restart) shift; cmd_compose "$cmd" "$@" ;;
     status) cmd_compose ps ;;
-    logs) shift; cmd_compose logs "$@" ;;
+    logs)
+      shift
+      if [[ $# -eq 0 ]]; then
+        cmd_compose logs -f --tail 100
+      else
+        cmd_compose logs "$@"
+      fi
+      ;;
     edit-env) cmd_edit_env ;;
     uninstall) cmd_uninstall ;;
     install-script) need_root; cmd_install_script ;;

@@ -18,6 +18,7 @@ port=""
 IN_MENU=0
 MENU_SEL=0
 CHECK_FAIL=0
+IS_UPDATING=0
 _CACHED_LATEST_TAG=""
 _CACHED_LATEST_TAG_SET=0
 
@@ -327,15 +328,17 @@ audit_common() {
   else
     row_warn "$(say "Docker is not installed yet." "Docker ещё не установлен.")"
   fi
-  if role_installed dns; then
-    row_warn "$(say "DNS agent files are already in /opt/dnsmarty-dns." "Файлы DNS-агента уже есть в /opt/dnsmarty-dns.")"
-  else
-    row_ok "$(say "No DNS agent install." "DNS-агент ещё не установлен.")"
-  fi
-  if role_installed proxy; then
-    row_warn "$(say "Proxy agent files are already in /opt/dnsmarty-proxy." "Файлы прокси уже есть в /opt/dnsmarty-proxy.")"
-  else
-    row_ok "$(say "No proxy agent install." "Прокси ещё не установлен.")"
+  if [[ "$IS_UPDATING" -ne 1 ]]; then
+    if role_installed dns; then
+      row_warn "$(say "DNS agent files are already in /opt/dnsmarty-dns." "Файлы DNS-агента уже есть в /opt/dnsmarty-dns.")"
+    else
+      row_ok "$(say "No DNS agent install." "DNS-агент ещё не установлен.")"
+    fi
+    if role_installed proxy; then
+      row_warn "$(say "Proxy agent files are already in /opt/dnsmarty-proxy." "Файлы прокси уже есть в /opt/dnsmarty-proxy.")"
+    else
+      row_ok "$(say "No proxy agent install." "Прокси ещё не установлен.")"
+    fi
   fi
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 https://ghcr.io/v2/ 2>/dev/null || true)
   if [[ "$code" == "200" || "$code" == "401" ]]; then
@@ -354,9 +357,9 @@ audit_role() {
     data_ours=1
     saved=$(saved_port "$dir")
     [[ "$agent" == "$saved" ]] && agent_ours=1
-    row_ok "$(say "${role} agent is already installed and running." "Агент ${role} уже установлен и работает.")"
+    [[ "$IS_UPDATING" -eq 1 ]] || row_ok "$(say "${role} agent is already installed and running." "Агент ${role} уже установлен и работает.")"
   elif role_installed "$role"; then
-    row_warn "$(say "${role} files exist, the container is stopped." "Файлы ${role} есть, контейнер остановлен.")"
+    [[ "$IS_UPDATING" -eq 1 ]] || row_warn "$(say "${role} files exist, the container is stopped." "Файлы ${role} есть, контейнер остановлен.")"
   else
     row_ok "$(say "No ${role} install in ${dir}." "В ${dir} агента ${role} ещё нет.")"
   fi
@@ -534,16 +537,32 @@ sha256_of() {
 
 # Cached for the process lifetime so menus do not hit the API on every redraw.
 latest_tag() {
-  if [[ "$_CACHED_LATEST_TAG_SET" -eq 1 ]]; then
+  local target_role="${1:-${role:-}}"
+  if [[ "$_CACHED_LATEST_TAG_SET" -eq 1 && -z "$target_role" ]]; then
     printf '%s' "$_CACHED_LATEST_TAG"
     return
   fi
-  _CACHED_LATEST_TAG_SET=1
-  _CACHED_LATEST_TAG=$(
-    curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
-      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true
+  local rel_tag="" pattern="^(dns-v|proxy-v|v)"
+  if [[ "$target_role" == "dns" ]]; then
+    pattern="^(dns-v|v)"
+  elif [[ "$target_role" == "proxy" ]]; then
+    pattern="^(proxy-v|v)"
+  fi
+  rel_tag=$(
+    curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null \
+      | grep -oE '"tag_name":[[:space:]]*"[^"]+"' | cut -d'"' -f4 | grep -E "$pattern" | head -1 || true
   )
-  printf '%s' "$_CACHED_LATEST_TAG"
+  if [[ -z "$rel_tag" ]]; then
+    rel_tag=$(
+      curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true
+    )
+  fi
+  if [[ -z "$target_role" ]]; then
+    _CACHED_LATEST_TAG_SET=1
+    _CACHED_LATEST_TAG="$rel_tag"
+  fi
+  printf '%s' "$rel_tag"
 }
 
 # installed_image reads DNSMARTY_IMAGE from an installed agent .env (dns, then proxy).
@@ -598,7 +617,7 @@ resolve_image() {
     return
   fi
   [[ -n "$IMAGE" ]] && return
-  tag=$(latest_tag)
+  tag=$(latest_tag "$role")
   if [[ -n "$tag" ]]; then
     tag=$(printf '%s' "${tag}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
     IMAGE="${repo}:${tag}"
@@ -660,6 +679,55 @@ fetch_verified() {
   mv -f "$tmp" "$dest"
   chmod 755 "$dest"
   ok "$(say "${name} updated from main" "${name} обновлён из main")"
+}
+
+check_script_update() {
+  [[ "${DNSMARTY_NO_UPDATE_CHECK:-0}" == "1" ]] && return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  local script_name="$1"
+  shift
+  local target_file="${BIN_PATH}"
+  [[ -f "$target_file" ]] || target_file="${BASH_SOURCE[0]}"
+  [[ -f "$target_file" ]] || return 0
+
+  local current_hash=""
+  current_hash=$(sha256_of "$target_file" 2>/dev/null || true)
+  [[ -n "$current_hash" ]] || return 0
+
+  local remote_hash="" tag="" sums=""
+  tag=$(latest_tag "")
+  if [[ -n "$tag" ]]; then
+    sums=$(curl -fsSL --connect-timeout 2 --max-time 4 "https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS" 2>/dev/null || true)
+    if [[ -n "$sums" ]]; then
+      remote_hash=$(printf '%s\n' "$sums" | awk -v n="$script_name" '$2 == n || $2 == "*" n {print $1}')
+    fi
+  fi
+
+  if [[ -z "$remote_hash" ]]; then
+    local tmp=""
+    tmp=$(mktemp)
+    if curl -fsSL --connect-timeout 2 --max-time 4 "https://raw.githubusercontent.com/${REPO}/main/scripts/${script_name}" -o "$tmp" 2>/dev/null; then
+      remote_hash=$(sha256_of "$tmp" 2>/dev/null || true)
+    fi
+    rm -f "$tmp"
+  fi
+
+  [[ -n "$remote_hash" ]] || return 0
+
+  if [[ "$current_hash" != "$remote_hash" ]]; then
+    warn "$(say "A newer version of ${script_name} is available." "Доступна новая версия скрипта ${script_name}.")"
+    if [[ "$(id -u)" -ne 0 ]]; then
+      info "$(say "Run 'sudo ${script_name%.sh} self-update' to update." "Запустите 'sudo ${script_name%.sh} self-update' для обновления.")"
+    elif [[ -t 0 ]]; then
+      if confirm "$(say "Update ${script_name%.sh} now?" "Обновить ${script_name%.sh} сейчас?")" "y"; then
+        cmd_self_update
+        info "$(say "Restarting with the new version..." "Перезапуск с новой версией...")"
+        exec "$BIN_PATH" "$@"
+      fi
+    else
+      info "$(say "Run '${script_name%.sh} self-update' to update." "Запустите '${script_name%.sh} self-update' для обновления.")"
+    fi
+  fi
 }
 
 write_unit() {
@@ -823,6 +891,11 @@ finish_install() {
   cmd_install_script
   bring_up
   print_access
+  if [[ -t 1 ]]; then
+    echo
+    info "$(say "Following logs (Ctrl+C to exit)..." "Вывод логов в реальном времени (Ctrl+C для выхода)...")"
+    (cd "$(app_dir)" && docker compose logs -f --tail 50) || true
+  fi
 }
 
 pick_installed_role() {
@@ -867,13 +940,14 @@ cmd_self_update() {
 
 cmd_update() {
   need_root
+  IS_UPDATING=1
   cmd_self_update
   parse_install_args "$@"
+  pick_installed_role
   section "$(say "Checks" "Проверки")"
   audit_common
   echo
   [[ "$CHECK_FAIL" -eq 0 ]] || die "$(say "Fix the failed checks before continuing." "Исправьте ошибки перед продолжением.")"
-  pick_installed_role
   load_saved || die "$(say "Saved .env has no key." "В сохранённом .env нет ключа.")"
   section "$(say "Ports" "Порты")"
   audit_role
@@ -882,7 +956,52 @@ cmd_update() {
   section "$(say "Setup" "Настройка")"
   prompt_key
   prompt_port
-  finish_install
+  ensure_docker
+
+  local current_img target_img repo tag
+  repo=$(image_repo)
+  current_img=$(env_get DNSMARTY_IMAGE)
+
+  if [[ -n "$WANT_VERSION" ]]; then
+    tag=$(printf '%s' "${WANT_VERSION}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
+    target_img="${repo}:${tag}"
+  elif [[ -n "$IMAGE" ]]; then
+    target_img="$IMAGE"
+  else
+    tag=$(latest_tag "$role")
+    if [[ -n "$tag" ]]; then
+      tag=$(printf '%s' "${tag}" | sed -E 's/.*-v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/' | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+.*)/\1/')
+      target_img="${repo}:${tag}"
+    else
+      target_img="${repo}:latest"
+    fi
+  fi
+
+  # Only update image if there is actually a newer version
+  if [[ -z "$WANT_VERSION" && -n "$current_img" && "$current_img" == "$target_img" && "$target_img" != *:latest && "$target_img" != *:dev ]]; then
+    ok "$(say "Image ${target_img} is already the latest version. Containers not restarted." "Образ ${target_img} уже самой свежей версии. Перезапуск не требуется.")"
+    print_access
+    return 0
+  fi
+
+  local old_id new_id
+  old_id=$(docker image inspect --format '{{.Id}}' "$target_img" 2>/dev/null || true)
+  info "$(say "Checking for newer image: ${target_img}..." "Проверяю наличие обновлённого образа: ${target_img}...")"
+  (cd "$(app_dir)" && docker compose pull "$role") || docker pull "$target_img" || true
+  new_id=$(docker image inspect --format '{{.Id}}' "$target_img" 2>/dev/null || true)
+
+  if [[ -z "$WANT_VERSION" && -n "$old_id" && "$old_id" == "$new_id" && "$current_img" == "$target_img" ]]; then
+    ok "$(say "Image ${target_img} is already up to date. Containers not restarted." "Образ ${target_img} уже актуален. Перезапуск не требуется.")"
+    print_access
+    return 0
+  fi
+
+  IMAGE="$target_img"
+  env_set DNSMARTY_IMAGE "$IMAGE"
+  write_unit
+  bring_up
+  ok "$(say "Updated to ${IMAGE}." "Обновлено до ${IMAGE}.")"
+  print_access
 }
 
 cmd_compose() {
@@ -982,7 +1101,7 @@ menu() {
       1) run_action cmd_update; pause ;;
       2) role=""; port=""; run_action cmd_check; pause ;;
       3) role=""; run_action cmd_compose ps; pause ;;
-      4) role=""; run_action cmd_compose logs --tail 80; pause ;;
+      4) role=""; run_action cmd_compose logs -f --tail 80; pause ;;
       5) role=""; run_action cmd_compose restart; pause ;;
       6) role=""; run_action cmd_uninstall; pause ;;
     esac
@@ -1027,6 +1146,10 @@ main() {
   fi
   local cmd="${1:-menu}"
   case "$cmd" in
+    self-update | help | -h | --help) ;;
+    *) check_script_update "dnsmarty-node.sh" "$@" ;;
+  esac
+  case "$cmd" in
     menu) menu ;;
     install)
       shift
@@ -1037,7 +1160,14 @@ main() {
     check) shift || true; cmd_check ;;
     up | down | restart) shift; cmd_compose "$cmd" "$@" ;;
     status) cmd_compose ps ;;
-    logs) shift; cmd_compose logs "$@" ;;
+    logs)
+      shift
+      if [[ $# -eq 0 ]]; then
+        cmd_compose logs -f --tail 100
+      else
+        cmd_compose logs "$@"
+      fi
+      ;;
     uninstall) cmd_uninstall ;;
     install-script) need_root; cmd_install_script ;;
     help | -h | --help) usage ;;
